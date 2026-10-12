@@ -53,8 +53,8 @@ function offset(from, to) {
   const s = Math.max(0, Math.round((new Date(to) - new Date(from)) / 1000));
   return `+${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
-const statusDot = (st) => ({ running: "dot-run", success: "dot-ok", failed: "dot-bad", skipped: "dot-skip" }[st] || "dot-idle");
-const statusLabel = (st) => ({ running: "Running", success: "Done", failed: "Failed", skipped: "Skipped" }[st] || "Idle");
+const statusDot = (st) => ({ running: "dot-run", success: "dot-ok", failed: "dot-bad", skipped: "dot-skip", stopped: "dot-skip" }[st] || "dot-idle");
+const statusLabel = (st) => ({ running: "Running", success: "Done", failed: "Failed", skipped: "Skipped", stopped: "Stopped" }[st] || "Idle");
 
 // ── auth ─────────────────────────────────────────────────────────────────────
 async function init() {
@@ -335,7 +335,14 @@ function renderTimeline() {
     return;
   }
   $("tl-h").textContent = `Run timeline · ${agentName(run.agent)} · ${clientName(run.client_id)}`;
-  $("tl-meta").textContent = `${clock(run.started_at)}${run.demo ? " · demo" : ""} · ${run.trigger || ""}`;
+  $("tl-meta").innerHTML = `${esc(clock(run.started_at))}${run.demo ? " · demo" : ""} · ${esc(run.trigger || "")}`
+    + (run.status === "running"
+      ? (run.stop_requested
+        ? ` <span class="stop-note">Stopping after the current step…</span>`
+        : ` <button type="button" class="btn btn-stop" id="stop-run">Stop this run</button>`)
+      : "");
+  const stopBtn = $("stop-run");
+  if (stopBtn) stopBtn.addEventListener("click", () => stopRun(run.id));
   const evs = state.events.filter((e) => e.run_id === run.id);
   const rows = [`<li><span class="t-time">+0:00</span><span class="t-mark"></span><span class="t-msg">Started. ${esc(run.trigger || "")}</span></li>`];
   for (const e of evs) {
@@ -368,6 +375,19 @@ function renderRelativeTimes() {
 }
 
 // ── actions ──────────────────────────────────────────────────────────────────
+async function stopRun(id) {
+  const run = state.runs.find((r) => r.id === id);
+  if (!run || !confirm(`Stop this ${agentName(run.agent)} run? The step in progress finishes, then it stops and saves nothing further.`)) return;
+  try {
+    await callApi(`/api/command-center/runs/${id}/stop`, {});
+    run.stop_requested = true;
+    renderTimeline();
+    banner(`Stopping the ${agentName(run.agent)} run. It finishes the step in progress first, usually under a minute.`);
+  } catch (err) {
+    banner(`Could not stop the run: ${err.message}`, true);
+  }
+}
+
 async function callApi(path, body) {
   const { data } = await sb.auth.getSession();
   const token = data.session?.access_token;

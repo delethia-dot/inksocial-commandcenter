@@ -226,3 +226,8 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--accent)
   .client-cards { grid-template-columns: minmax(0, 1fr); }
   .tab { padding: 0 12px; }
 }
+
+.btn-stop { height: 34px; padding: 0 12px; margin-left: 8px; border-color: #5a2e29; background: var(--bad-bg); color: var(--bad-text); font-family: var(--sans); font-size: 13px; }
+.btn-stop:hover { border-color: var(--bad); }
+.stop-note { margin-left: 8px; color: var(--warn); font-family: var(--sans); }
+.node.stopped { border-color: var(--gate); }
