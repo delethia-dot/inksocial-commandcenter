@@ -330,3 +330,12 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--accent)
 /* Chat speaker line */
 .msg .who { display: inline-flex; align-items: center; gap: 6px; font-family: var(--sans); font-size: 13px; color: var(--text); letter-spacing: 0; }
 .msg .who .muted { font-size: 12px; }
+
+/* Run research now */
+.notify-opt { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border: 1px solid var(--line);
+  border-radius: 10px; font-size: 14px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.notify-opt:has(input:checked) { color: var(--text); border-color: var(--accent); }
+.notify-opt input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+.scope-note { margin: 0; padding: 12px 16px; border-radius: 10px; border: 1px dashed var(--gate); background: var(--gate-bg); color: #c5d6f5; font-size: 14px; }
+.btn-clear { height: 36px; font-size: 13px; }
+@media (max-width: 640px) { .demo { flex-wrap: wrap; } .demo select { flex: 1 1 100%; } }

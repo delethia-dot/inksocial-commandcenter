@@ -6,7 +6,7 @@
 export const SUPABASE_URL = "https://oxgmypmwkjrkkbwduldb.supabase.co";
 export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_GKkZkXTSJUfAaKM9_UdMlw_dizTrD9g";
 
-// The InkSocial agents service on Railway (demo runs and "Ask the agents").
+// The InkSocial agents service on Railway (run research now, conversations, alerts).
 export const AGENTS_API = "https://inksocialagents.up.railway.app";
 
 // The agents. The key on the left must stay as is (it is what the agents write
@@ -30,7 +30,7 @@ export const AGENTS = {
     name: "Richard", role: "Research agent", color: "#E8C267",
     short: "Finds what's outperforming in each client's niche and turns it into ideas.",
     does: "Scrapes competitor Instagram posts, scores each against that account's average to find outliers, pulls trending YouTube videos, and has Claude write the Key Patterns analysis and the week's content ideas. Flags bad data instead of hiding it.",
-    startedBy: "Each client's research schedule (weekly or every two weeks, Mondays), or a demo run here.",
+    startedBy: "Each client's research schedule (weekly or every two weeks, Mondays), or Run research now on this dashboard.",
     handsTo: ["content_strategy"],
   },
   content_strategy: {

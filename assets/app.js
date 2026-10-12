@@ -1,7 +1,7 @@
 // Agent Command Center: live view of the InkSocial agents.
 // Reads agent_runs / agent_events from Supabase (admin-only by row-level
 // security), listens for changes in real time, and calls the agents service
-// for demo runs and questions.
+// for test runs, on-demand runs and conversations.
 
 // Bundled locally (supabase-js 2.117.3) so the dashboard has no CDN dependency.
 import { createClient } from "./vendor/supabase.esm.js";
@@ -22,6 +22,10 @@ const state = {
   followLatest: true,
   channel: null,
   lastUpdate: null,
+  scope: "client",      // "client" (Agents tab) or "test" (Test runs tab)
+  allRuns: [],
+  allEvents: [],
+  clientRuns: [],
   showDismissed: false,
   drawerAgent: null,
   clientFilter: null,   // client id the runs table is filtered to
@@ -138,14 +142,25 @@ async function reload() {
     setLive("bad", "Could not load the run log");
     return;
   }
-  state.runs = runs.data || [];
-  state.events = events.data || [];
+  state.allRuns = runs.data || [];
+  state.allEvents = events.data || [];
+  applyScope();
   state.lastUpdate = new Date();
   setLive(state.live === false ? "bad" : state.live ? "ok" : "idle", state.live === undefined ? "Connecting" : undefined);
+  render();
+}
+
+// Test runs (started here without notifying the client) live on their own tab
+// and never count toward client stats. Cleared runs are hidden everywhere.
+function applyScope() {
+  const visible = state.allRuns.filter((r) => !r.archived);
+  state.clientRuns = visible.filter((r) => !r.demo);
+  state.runs = state.scope === "test" ? visible.filter((r) => r.demo) : state.clientRuns;
+  const ids = new Set(state.runs.map((r) => r.id));
+  state.events = state.allEvents.filter((e) => ids.has(e.run_id));
   if (state.followLatest || !state.runs.find((r) => r.id === state.selectedRunId)) {
     state.selectedRunId = state.runs[0]?.id || null;
   }
-  render();
 }
 
 let reloadTimer = null;
@@ -373,9 +388,8 @@ $("alerts-clear").addEventListener("click", () => {
 $("alerts-toggle").addEventListener("click", () => { state.showDismissed = !state.showDismissed; renderAlerts(); });
 
 function renderRuns() {
-  const demoOnly = $("filter-demo").checked;
   const rows = state.runs
-    .filter((r) => (!demoOnly || r.demo) && (!state.clientFilter || r.client_id === state.clientFilter))
+    .filter((r) => !state.clientFilter || r.client_id === state.clientFilter)
     .slice(0, 40);
   $("runs-h").innerHTML = state.clientFilter
     ? `Recent runs · ${esc(clientName(state.clientFilter))} <button type="button" class="chip small" id="clear-client-filter">Show all clients</button>`
@@ -385,16 +399,30 @@ function renderRuns() {
   $("runs-body").innerHTML = rows.length ? rows.map((r) => `
     <tr data-run="${esc(r.id)}" class="${r.id === state.selectedRunId ? "selected" : ""}">
       <td class="mono small" title="${esc(clock(r.started_at))}">${esc(clock(r.started_at))}</td>
-      <td>${esc(agentName(r.agent))}${r.demo ? '<span class="tag">DEMO</span>' : ""}</td>
+      <td>${esc(agentName(r.agent))}</td>
       <td>${esc(clientName(r.client_id))}</td>
       <td><span class="status"><span class="dot ${statusDot(r.status)}"></span>${esc(statusLabel(r.status))}</span></td>
       <td class="small muted">${esc(r.trigger || "")}</td>
       <td class="small">${esc(r.error || r.summary || "")}</td>
     </tr>`).join("")
-    : `<tr><td colspan="6" class="empty">No runs yet. Start a demo run, or wait for the next scheduled one.</td></tr>`;
+    : `<tr><td colspan="6" class="empty">${state.scope === "test"
+        ? "No test runs. Pick a client and use Run research now to start one."
+        : "No client runs yet. They appear here the moment a scheduled run starts or a client approves something."}</td></tr>`;
+  $("clear-tests").hidden = !(state.scope === "test" && state.runs.some((r) => r.status !== "running"));
   document.querySelectorAll("#runs-body tr[data-run]").forEach((tr) => tr.addEventListener("click", () => selectRun(tr.dataset.run)));
 }
-$("filter-demo").addEventListener("change", renderRuns);
+$("clear-tests").addEventListener("click", async () => {
+  const n = state.runs.filter((r) => r.status !== "running").length;
+  if (!confirm(`Clear ${n} test run${n === 1 ? "" : "s"} from the dashboard? They're hidden, not deleted.`)) return;
+  try {
+    const out = await callApi("/api/command-center/runs/archive", {});
+    state.allRuns.forEach((r) => { if (r.demo && r.status !== "running") r.archived = true; });
+    applyScope(); render();
+    banner(`Cleared ${out.runs} test run${out.runs === 1 ? "" : "s"}.`);
+  } catch (err) {
+    banner(`Could not clear test runs: ${err.message}`, true);
+  }
+});
 
 function renderTimeline() {
   const run = state.runs.find((r) => r.id === state.selectedRunId);
@@ -405,7 +433,7 @@ function renderTimeline() {
     return;
   }
   $("tl-h").textContent = `Run timeline · ${agentName(run.agent)} · ${clientName(run.client_id)}`;
-  $("tl-meta").innerHTML = `${esc(clock(run.started_at))}${run.demo ? " · demo" : ""} · ${esc(run.trigger || "")}`
+  $("tl-meta").innerHTML = `${esc(clock(run.started_at))}, ${esc(run.trigger || "")}`
     + (run.status === "running"
       ? (run.stop_requested
         ? ` <span class="stop-note">Stopping after the current step…</span>`
@@ -480,15 +508,25 @@ function banner(text, bad = false) {
   banner.t = setTimeout(() => { el.hidden = true; }, 12000);
 }
 
+$("run-notify").addEventListener("change", () => {
+  $("demo-btn").textContent = $("run-notify").checked ? "Run for client now" : "Run research now";
+});
+
 $("demo-btn").addEventListener("click", async () => {
   const btn = $("demo-btn");
+  const notify = $("run-notify").checked;
+  const name = clientName($("demo-client").value);
+  if (notify && !confirm(`Run research for ${name} now and email them their new ideas? This counts as a real client run.`)) return;
   btn.disabled = true;
   try {
-    const out = await callApi("/api/command-center/demo-run", { client_id: $("demo-client").value });
+    await callApi("/api/command-center/demo-run", { client_id: $("demo-client").value, notify });
     state.followLatest = true;
-    banner(`Demo research run started for ${out.client}. It runs for real and the client is not notified. Steps appear below as they happen.`);
+    showTab(notify ? "agents" : "test");
+    banner(notify
+      ? `Richard is running research for ${name}. They'll get an email when the ideas are ready.`
+      : `Test run started for ${name}. Richard does the real research, ${name} isn't emailed, and it stays on this tab. Steps appear below as they happen.`);
   } catch (err) {
-    banner(`Could not start the demo run: ${err.message}`, true);
+    banner(`Could not start the run: ${err.message}`, true);
   } finally {
     setTimeout(() => { btn.disabled = false; }, 4000);
   }
@@ -543,7 +581,7 @@ function renderDrawer() {
     </div>
     <h3 class="d-sub">Recent runs</h3>
     <ul class="d-runs">${runs.slice(0, 6).map((r) => `<li><button type="button" data-drawer-run="${esc(r.id)}">
-        <span class="dot ${statusDot(r.status)}"></span><span class="d-run-main">${esc(clientName(r.client_id))}${r.demo ? " (demo)" : ""}</span>
+        <span class="dot ${statusDot(r.status)}"></span><span class="d-run-main">${esc(clientName(r.client_id))}${r.demo ? " (test)" : ""}</span>
         <span class="d-run-meta">${esc(statusLabel(r.status))}, ${esc(clock(r.started_at))}</span></button></li>`).join("")
       || `<li class="empty">No runs in the last 30 days.</li>`}</ul>
     <button type="button" class="btn btn-primary d-talk" id="drawer-talk">Talk to ${esc(a.name)}</button>`;
@@ -572,14 +610,22 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ── tabs ─────────────────────────────────────────────────────────────────────
-const TABS = ["agents", "clients", "talk"];
+const TABS = ["agents", "test", "clients", "talk"];
 
 function showTab(name) {
   if (!TABS.includes(name)) name = "agents";
-  for (const t of TABS) {
-    $(`view-${t}`).hidden = t !== name;
-    $(`tab-${t}`).setAttribute("aria-selected", String(t === name));
+  const view = name === "test" ? "agents" : name;   // Test runs reuses the Agents view
+  for (const v of ["agents", "clients", "talk"]) $(`view-${v}`).hidden = v !== view;
+  for (const t of TABS) $(`tab-${t}`).setAttribute("aria-selected", String(t === name));
+  const scope = name === "test" ? "test" : "client";
+  if (scope !== state.scope) {
+    state.scope = scope;
+    state.clientFilter = null;
+    state.followLatest = true;
+    applyScope();
+    render();
   }
+  $("scope-note").hidden = scope !== "test";
   if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
   if (name === "agents") requestAnimationFrame(drawEdges);
   if (name === "talk") scrollChat();
@@ -621,6 +667,13 @@ async function loadClientData() {
   renderClients();
 }
 
+function clientAlertCount(clientId) {
+  const runs = state.clientRuns.filter((r) => r.client_id === clientId && within(r.started_at, 7));
+  const ids = new Set(runs.map((r) => r.id));
+  return runs.filter((r) => r.status === "failed" && !r.alert_dismissed).length
+    + state.allEvents.filter((e) => ids.has(e.run_id) && e.kind === "alert" && !e.dismissed && !e.message.startsWith("Run failed:")).length;
+}
+
 function renderClients() {
   const rows = state.clientRows;
   const active = state.pieces.filter((p) => p.status !== "Scheduled").length;
@@ -636,9 +689,9 @@ function renderClients() {
     const pcs = state.pieces.filter((p) => p.client_id === c.id);
     const counts = Object.fromEntries(STAGES.map((st) => [st, pcs.filter((p) => p.status === st).length]));
     const inProd = pcs.filter((p) => p.status !== "Scheduled").length;
-    const runs7 = state.runs.filter((r) => r.client_id === c.id && within(r.started_at, 7));
-    const alerts = alertItems().filter((a) => !a.dismissed && state.runs.find((r) => r.id === a.run)?.client_id === c.id).length;
-    const lastRun = state.runs.find((r) => r.client_id === c.id);
+    const runs7 = state.clientRuns.filter((r) => r.client_id === c.id && within(r.started_at, 7));
+    const alerts = clientAlertCount(c.id);
+    const lastRun = state.clientRuns.find((r) => r.client_id === c.id);
     const statusCls = c.subscription_status === "Active" ? "ok" : c.subscription_status === "Onboarding" ? "warn" : "";
     const cadence = (c.research_cadence_weeks || 1) === 1 ? "weekly" : `every ${c.research_cadence_weeks} weeks`;
     const notify = [c.notification_email && "email", c.notification_slack && "Slack"].filter(Boolean).join(" + ") || "no notifications";
