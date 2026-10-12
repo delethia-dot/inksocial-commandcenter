@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Command Center</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+  <!-- Login -->
+  <main id="login-view" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="eyebrow">InkSocial</div>
+      <h1>Agent Command Center</h1>
+      <p class="muted">Sign in with your InkSocial admin account.</p>
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button type="submit" class="btn btn-primary">Sign in</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </main>
+
+  <!-- Dashboard -->
+  <div id="app-view" class="app" hidden>
+    <header class="top">
+      <div class="title">
+        <div class="eyebrow">InkSocial · Operations</div>
+        <h1>Agent Command Center</h1>
+      </div>
+      <span class="pill"><span id="live-dot" class="dot dot-idle"></span><span id="live-label">Connecting</span></span>
+      <div class="demo">
+        <label for="demo-client" class="sr-only">Client for demo run</label>
+        <select id="demo-client"></select>
+        <button id="demo-btn" class="btn btn-primary" type="button">Start demo run</button>
+      </div>
+      <button id="signout-btn" class="btn" type="button">Sign out</button>
+    </header>
+    <p id="demo-msg" class="banner" hidden></p>
+
+    <section class="kpis" aria-label="Key numbers">
+      <div class="kpi"><div class="kpi-label">Runs, last 7 days</div><div id="kpi-runs" class="kpi-val">0</div></div>
+      <div class="kpi"><div class="kpi-label">Success rate, last 30 days</div><div id="kpi-success" class="kpi-val">0%</div></div>
+      <div class="kpi"><div class="kpi-label">Alerts, last 7 days</div><div id="kpi-alerts" class="kpi-val">0</div></div>
+      <div class="kpi"><div class="kpi-label">Handoffs, last 7 days</div><div id="kpi-handoffs" class="kpi-val">0</div></div>
+    </section>
+
+    <section class="card" aria-labelledby="map-h">
+      <div class="card-head">
+        <h2 id="map-h">Live handoff map</h2>
+        <span id="map-scope" class="muted small">Last 7 days<span class="map-hint"> · swipe to see the full flow</span></span>
+      </div>
+      <div id="map" class="map">
+        <svg id="map-edges" class="map-edges" aria-hidden="true"></svg>
+        <div id="map-cols" class="map-cols"></div>
+      </div>
+      <div id="map-standalone" class="standalone"></div>
+      <p class="muted small">Solid lines are handoffs recorded in the run log. Dashed lines have not happened in this window. Labels mark the client step in between.</p>
+    </section>
+
+    <div class="grid">
+      <div class="col-main">
+
+        <section class="card" aria-labelledby="tl-h">
+          <div class="card-head">
+            <h2 id="tl-h">Run timeline</h2>
+            <span id="tl-meta" class="muted small mono"></span>
+          </div>
+          <ol id="timeline" class="timeline"></ol>
+        </section>
+
+        <section class="card" aria-labelledby="runs-h">
+          <div class="card-head">
+            <h2 id="runs-h">Recent runs</h2>
+            <label class="small muted"><input id="filter-demo" type="checkbox"> Demo runs only</label>
+          </div>
+          <div class="table-wrap">
+            <table class="runs">
+              <thead><tr><th>Started</th><th>Agent</th><th>Client</th><th>Status</th><th>Trigger</th><th>Result</th></tr></thead>
+              <tbody id="runs-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <aside class="col-side">
+        <section class="card" aria-labelledby="roster-h">
+          <h2 id="roster-h">Agents</h2>
+          <ul id="roster" class="roster"></ul>
+        </section>
+
+        <section class="card" aria-labelledby="alerts-h">
+          <h2 id="alerts-h">Alerts</h2>
+          <ul id="alerts" class="alerts"></ul>
+        </section>
+
+        <section class="card ask" aria-labelledby="ask-h">
+          <h2 id="ask-h">Ask the agents</h2>
+          <div id="ask-log" class="ask-log" aria-live="polite"></div>
+          <form id="ask-form" class="ask-form">
+            <label for="ask-input" class="small muted">Question about recent agent activity</label>
+            <div class="row">
+              <input id="ask-input" type="text" placeholder="Why did a client get no ideas last week?" required>
+              <button class="btn btn-primary" type="submit" aria-label="Ask">Ask</button>
+            </div>
+          </form>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/app.js"></script>
+</body>
+</html>
