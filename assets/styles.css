@@ -392,3 +392,14 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--accent)
   .cl-actions { text-align: left; }
   .view-bar select { flex: 1 1 100%; }
 }
+
+/* Agent instructions in the profile drawer */
+.d-instr { margin: 0 0 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.d-instr summary { cursor: pointer; padding: 12px 14px; font: 600 14px var(--sans); color: var(--text); list-style: none; display: flex; align-items: center; gap: 8px; min-height: 44px; box-sizing: border-box; }
+.d-instr summary::-webkit-details-marker { display: none; }
+.d-instr summary::before { content: "\25B8"; color: var(--accent); transition: transform .15s; }
+.d-instr[open] summary::before { transform: rotate(90deg); }
+.d-instr summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 10px; }
+.d-instr-note { margin: 0 14px 10px; font-size: 12px; color: var(--muted); }
+.d-instr-body { margin: 0 14px 14px; font: 13px/1.6 var(--mono); color: var(--text); white-space: pre-wrap; max-height: 420px; overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) { .d-instr summary::before { transition: none; } }

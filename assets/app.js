@@ -619,6 +619,11 @@ function renderDrawer() {
       <div><dt>Gets work from</dt><dd>${sources.length ? `<span class="chips">${sources.map(chip).join("")}</span>` : "A schedule or a client action"}</dd></div>
       <div><dt>Hands work to</dt><dd>${a.handsTo.length ? `<span class="chips">${a.handsTo.map(chip).join("")}</span>` : "Nobody; this is the last step"}</dd></div>
     </dl>
+    ${a.instructions ? `<details class="d-instr">
+      <summary>Instructions ${esc(a.name)} follows</summary>
+      <p class="d-instr-note">From ${esc(a.name)}'s code. Words in [brackets] are filled in with each client's details.</p>
+      <div class="d-instr-body">${esc(a.instructions)}</div>
+    </details>` : ""}
     <div class="d-stats">
       <div><span class="v">${r7.length}</span><span class="l">Runs this week</span></div>
       <div><span class="v">${done.length ? Math.round((ok / done.length) * 100) + "%" : "None"}</span><span class="l">Success, 30 days</span></div>
