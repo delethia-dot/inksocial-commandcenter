@@ -21,11 +21,22 @@ const state = {
   selectedRunId: null,
   followLatest: true,
   channel: null,
+  clientFilter: null,   // client id the runs table is filtered to
+  clientRows: [],       // full client rows for the Clients tab
+  research: [],
+  pieces: [],
+  ideas: [],
+  threads: [],
+  threadId: null,
+  messages: [],
+  chatTargets: [],      // agents picked to answer the next message
+  newMode: "direct",
+  newPicked: [],
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const agentName = (key) => AGENTS[key]?.name || key;
+const agentName = (key) => (key === "coordinator" ? "Coordinator" : AGENTS[key]?.name || key);
 const clientName = (id) => (id && state.clients[id]) || (id ? "Unknown client" : "No client");
 
 function ago(ts) {
@@ -88,6 +99,8 @@ async function enterApp() {
   $("app-view").hidden = false;
   await loadClients();
   await reload();
+  await Promise.all([loadClientData(), loadThreads()]);
+  initTabs();
   subscribe();
   setInterval(renderRelativeTimes, 30000);
   window.addEventListener("resize", drawEdges);
@@ -125,13 +138,15 @@ async function reload() {
 let reloadTimer = null;
 function scheduleReload() {
   clearTimeout(reloadTimer);
-  reloadTimer = setTimeout(reload, 400);
+  reloadTimer = setTimeout(() => { reload(); loadClientData(); }, 400);
 }
 
 function subscribe() {
   state.channel = sb.channel("agent-log")
     .on("postgres_changes", { event: "*", schema: "public", table: "agent_runs" }, scheduleReload)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "agent_events" }, scheduleReload)
+    .on("postgres_changes", { event: "*", schema: "public", table: "agent_threads" }, scheduleTalkReload)
+    .on("postgres_changes", { event: "*", schema: "public", table: "agent_messages" }, scheduleTalkReload)
     .subscribe((status) => {
       if (status === "SUBSCRIBED") setLive("ok", "Live");
       else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setLive("bad", "Live updates paused");
@@ -289,7 +304,14 @@ function renderAlerts() {
 
 function renderRuns() {
   const demoOnly = $("filter-demo").checked;
-  const rows = state.runs.filter((r) => !demoOnly || r.demo).slice(0, 40);
+  const rows = state.runs
+    .filter((r) => (!demoOnly || r.demo) && (!state.clientFilter || r.client_id === state.clientFilter))
+    .slice(0, 40);
+  $("runs-h").innerHTML = state.clientFilter
+    ? `Recent runs · ${esc(clientName(state.clientFilter))} <button type="button" class="chip small" id="clear-client-filter">Show all clients</button>`
+    : "Recent runs";
+  const clr = $("clear-client-filter");
+  if (clr) clr.addEventListener("click", () => { state.clientFilter = null; renderRuns(); });
   $("runs-body").innerHTML = rows.length ? rows.map((r) => `
     <tr data-run="${esc(r.id)}" class="${r.id === state.selectedRunId ? "selected" : ""}">
       <td class="mono small" title="${esc(clock(r.started_at))}">${esc(clock(r.started_at))}</td>
@@ -382,26 +404,277 @@ $("demo-btn").addEventListener("click", async () => {
   }
 });
 
-$("ask-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const input = $("ask-input");
-  const q = input.value.trim();
-  if (!q) return;
-  const log = $("ask-log");
-  log.insertAdjacentHTML("beforeend", `<div class="bubble me">${esc(q)}</div>`);
-  const pending = document.createElement("div");
-  pending.className = "bubble bot";
-  pending.textContent = "Checking the run log…";
-  log.appendChild(pending);
-  log.scrollTop = log.scrollHeight;
-  input.value = "";
-  try {
-    const out = await callApi("/api/command-center/ask", { question: q });
-    pending.textContent = out.answer || "No answer came back.";
-  } catch (err) {
-    pending.textContent = `Could not answer: ${err.message}`;
+
+// ── tabs ─────────────────────────────────────────────────────────────────────
+const TABS = ["agents", "clients", "talk"];
+
+function showTab(name) {
+  if (!TABS.includes(name)) name = "agents";
+  for (const t of TABS) {
+    $(`view-${t}`).hidden = t !== name;
+    $(`tab-${t}`).setAttribute("aria-selected", String(t === name));
   }
-  log.scrollTop = log.scrollHeight;
+  if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
+  if (name === "agents") requestAnimationFrame(drawEdges);
+  if (name === "talk") scrollChat();
+}
+
+function initTabs() {
+  document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+  document.querySelectorAll("[data-open-talk]").forEach((b) => b.addEventListener("click", () => {
+    showTab("talk");
+    openNewPanel(b.dataset.openTalk === "meeting" ? "meeting" : "direct");
+  }));
+  showTab(location.hash.slice(1) || "agents");
+}
+
+// ── clients ──────────────────────────────────────────────────────────────────
+const STAGES = [
+  "Pending Concept Approval", "Pending Hook Approval", "Pending Script Approval",
+  "Script Approved", "Ready for VA", "Scheduled",
+];
+const STAGE_SHORT = {
+  "Pending Concept Approval": "Concept approval", "Pending Hook Approval": "Hook approval",
+  "Pending Script Approval": "Script approval", "Script Approved": "Script approved",
+  "Ready for VA": "Ready for VA", "Scheduled": "Scheduled",
+};
+
+async function loadClientData() {
+  const [clients, research, pieces, ideas] = await Promise.all([
+    sb.from("clients").select("id,name,subscription_status,video_enabled,blog_enabled,research_cadence_weeks,notification_email,notification_slack,platforms").order("name"),
+    sb.from("research_results").select("client_id,week_of,post_count,outlier_count,analysis,created_at").order("week_of", { ascending: false }).limit(200),
+    sb.from("content_pieces").select("client_id,status"),
+    sb.from("content_ideas").select("client_id,status").eq("status", "Pending Review"),
+  ]);
+  state.clientRows = clients.data || [];
+  state.research = research.data || [];
+  state.pieces = pieces.data || [];
+  state.ideas = ideas.data || [];
+  for (const c of state.clientRows) state.clients[c.id] = c.name;
+  renderClients();
+}
+
+function renderClients() {
+  const rows = state.clientRows;
+  const active = state.pieces.filter((p) => p.status !== "Scheduled").length;
+  const ready = state.pieces.filter((p) => p.status === "Ready for VA").length;
+  $("ck-clients").textContent = rows.length;
+  $("ck-ideas").textContent = state.ideas.length;
+  $("ck-pieces").textContent = active;
+  $("ck-ready").textContent = ready;
+
+  $("client-cards").innerHTML = rows.map((c) => {
+    const latest = state.research.find((r) => r.client_id === c.id);
+    const ideas = state.ideas.filter((i) => i.client_id === c.id).length;
+    const pcs = state.pieces.filter((p) => p.client_id === c.id);
+    const counts = Object.fromEntries(STAGES.map((st) => [st, pcs.filter((p) => p.status === st).length]));
+    const inProd = pcs.filter((p) => p.status !== "Scheduled").length;
+    const runs7 = state.runs.filter((r) => r.client_id === c.id && within(r.started_at, 7));
+    const alerts = alertItems().filter((a) => state.runs.find((r) => r.id === a.run)?.client_id === c.id).length;
+    const lastRun = state.runs.find((r) => r.client_id === c.id);
+    const statusCls = c.subscription_status === "Active" ? "ok" : c.subscription_status === "Onboarding" ? "warn" : "";
+    const cadence = (c.research_cadence_weeks || 1) === 1 ? "weekly" : `every ${c.research_cadence_weeks} weeks`;
+    const notify = [c.notification_email && "email", c.notification_slack && "Slack"].filter(Boolean).join(" + ") || "no notifications";
+    const research = latest
+      ? `<p class="client-research${(latest.analysis || "").trim() ? "" : " empty"}">Latest research, week of ${esc(latest.week_of)}: ${latest.post_count} posts, ${latest.outlier_count} outliers${(latest.analysis || "").trim() ? "" : ", analysis empty"}</p>`
+      : `<p class="client-research muted">No research yet</p>`;
+    const stages = STAGES.filter((st) => counts[st]).map((st) =>
+      `<span class="stage${st === "Ready for VA" ? " stuck" : ""}" title="${esc(st)}"><b>${counts[st]}</b> ${esc(STAGE_SHORT[st])}</span>`).join("")
+      || `<span class="small muted">No content in production</span>`;
+    return `<article class="client">
+      <div class="client-head"><h3>${esc(c.name)}</h3><span class="badge ${statusCls}">${esc(c.subscription_status || "Unknown")}</span></div>
+      <div class="client-settings">Video ${c.video_enabled === false ? "off (analysis only)" : "on"} · Blog ${c.blog_enabled ? "on" : "off"} · Research ${cadence} · ${esc(notify)}</div>
+      <div class="client-stats">
+        <div class="cstat"><div class="v">${ideas}</div><div class="l">Ideas to review</div></div>
+        <div class="cstat"><div class="v">${inProd}</div><div class="l">In production</div></div>
+        <div class="cstat${alerts ? " bad" : ""}"><div class="v">${alerts}</div><div class="l">Alerts, 7 days</div></div>
+      </div>
+      ${research}
+      <div class="stages">${stages}</div>
+      <div class="small muted">${runs7.length} agent run${runs7.length === 1 ? "" : "s"} this week${lastRun ? ` · last: ${esc(agentName(lastRun.agent))}, <span data-ago="${esc(lastRun.started_at)}">${ago(lastRun.started_at)}</span>` : ""}</div>
+      <div class="row-btns">
+        <button class="btn" type="button" data-client-runs="${esc(c.id)}">View runs</button>
+        <button class="btn" type="button" data-client-meet="${esc(c.id)}">Review with the agents</button>
+      </div>
+    </article>`;
+  }).join("") || `<p class="empty">No clients yet.</p>`;
+
+  document.querySelectorAll("[data-client-runs]").forEach((b) => b.addEventListener("click", () => {
+    state.clientFilter = b.dataset.clientRuns;
+    showTab("agents");
+    renderRuns();
+    $("runs-h").scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  document.querySelectorAll("[data-client-meet]").forEach((b) => b.addEventListener("click", async () => {
+    const id = b.dataset.clientMeet;
+    showTab("talk");
+    await startThread({
+      mode: "meeting",
+      agents: Object.keys(AGENTS),
+      client_id: id,
+      title: `${clientName(id)} review`,
+      first: `Give me a status review of ${clientName(id)}: what ran, what's waiting on the client, and anything stuck or broken.`,
+    });
+  }));
+}
+
+// ── conversations ────────────────────────────────────────────────────────────
+async function loadThreads() {
+  const { data } = await sb.from("agent_threads").select("*").order("updated_at", { ascending: false }).limit(100);
+  state.threads = data || [];
+  renderThreads();
+}
+
+async function loadMessages() {
+  if (!state.threadId) { state.messages = []; renderChat(); return; }
+  const { data } = await sb.from("agent_messages").select("*").eq("thread_id", state.threadId).order("id").limit(500);
+  state.messages = data || [];
+  renderChat();
+}
+
+let talkTimer = null;
+function scheduleTalkReload() {
+  clearTimeout(talkTimer);
+  talkTimer = setTimeout(() => { loadThreads(); loadMessages(); }, 250);
+}
+
+function threadSub(t) {
+  const who = t.mode === "meeting" ? "Meeting" : t.agents.map(agentName).join(", ");
+  return `${esc(who)}${t.client_id ? ` · ${esc(clientName(t.client_id))}` : ""} · <span data-ago="${esc(t.updated_at)}">${ago(t.updated_at)}</span>`;
+}
+
+function renderThreads() {
+  $("thread-list").innerHTML = state.threads.length
+    ? state.threads.map((t) => `<li><button type="button" data-thread="${esc(t.id)}" class="${t.id === state.threadId ? "active" : ""}">
+        <span class="t-title">${esc(t.title)}</span><span class="t-sub">${threadSub(t)}</span></button></li>`).join("")
+    : `<li class="empty">No conversations yet.</li>`;
+  document.querySelectorAll("[data-thread]").forEach((b) => b.addEventListener("click", () => openThread(b.dataset.thread)));
+}
+
+function currentThread() { return state.threads.find((t) => t.id === state.threadId); }
+
+async function openThread(id) {
+  state.threadId = id;
+  state.chatTargets = [];
+  $("new-panel").hidden = true;
+  $("chat-panel").hidden = false;
+  renderThreads();
+  await loadMessages();
+  $("chat-input").focus();
+}
+
+function scrollChat() {
+  const log = $("chat-log");
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+function renderChat() {
+  const t = currentThread();
+  $("chat-form").hidden = !t;
+  if (!t) {
+    $("chat-title").textContent = "Pick or start a conversation";
+    $("chat-who").textContent = "";
+    $("chat-log").innerHTML = `<p class="empty">Start a new conversation with one agent or several, or call a meeting with all of them. Use @ and an agent's name to bring someone in mid-conversation.</p>`;
+    return;
+  }
+  $("chat-title").textContent = t.title;
+  $("chat-who").textContent = t.mode === "meeting"
+    ? `Meeting with ${t.agents.map(agentName).join(", ")}`
+    : `With ${t.agents.map(agentName).join(", ")}`;
+  const nearBottom = $("chat-log").scrollHeight - $("chat-log").scrollTop - $("chat-log").clientHeight < 80;
+  $("chat-log").innerHTML = state.messages.map((m) => {
+    if (m.role === "user") {
+      return `<div class="msg user"><span class="who">You</span><div class="body">${esc(m.content)}</div></div>`;
+    }
+    const cls = ["msg", "agent", m.agent === "coordinator" ? "coordinator" : "", m.status === "thinking" ? "thinking" : "", m.status === "error" ? "error" : ""].join(" ");
+    const body = m.status === "thinking" ? `${esc(agentName(m.agent))} is thinking…` : esc(m.content);
+    return `<div class="${cls}"><span class="who">${esc(agentName(m.agent))}${m.agent === "coordinator" ? " · meeting notes" : ""}</span><div class="body">${body}</div></div>`;
+  }).join("") || `<p class="empty">Say hello, or ask what happened this week.</p>`;
+  renderTargets(t);
+  if (nearBottom || state.messages.some((m) => m.status === "thinking")) scrollChat();
+}
+
+function renderTargets(t) {
+  const agents = t.mode === "meeting" ? t.agents : Object.keys(AGENTS);
+  const label = t.mode === "meeting" ? "Answering: everyone in the meeting, or pick" : "Who should answer";
+  $("chat-targets").innerHTML = `<span class="small muted">${label}:</span>` + agents.map((k) =>
+    `<button type="button" class="chip" data-target="${k}" aria-pressed="${state.chatTargets.includes(k)}">${esc(agentName(k))}</button>`).join("");
+  document.querySelectorAll("[data-target]").forEach((b) => b.addEventListener("click", () => {
+    const k = b.dataset.target;
+    state.chatTargets = state.chatTargets.includes(k) ? state.chatTargets.filter((x) => x !== k) : [...state.chatTargets, k];
+    renderTargets(t);
+  }));
+}
+
+function openNewPanel(mode) {
+  state.newMode = mode;
+  state.newPicked = mode === "meeting" ? Object.keys(AGENTS) : [];
+  $("chat-panel").hidden = true;
+  $("new-panel").hidden = false;
+  $("new-title").textContent = mode === "meeting" ? "Call a meeting" : "New conversation";
+  $("new-help").textContent = mode === "meeting"
+    ? "Everyone is invited. Untick anyone you don't need. Each agent answers in pipeline order, then the Coordinator writes the notes."
+    : "Pick one agent or several. You can bring others in later with @.";
+  $("new-client").innerHTML = `<option value="">All clients</option>` + state.clientRows.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+  renderNewChips();
+}
+
+function renderNewChips() {
+  $("new-agents").innerHTML = Object.keys(AGENTS).map((k) =>
+    `<button type="button" class="chip" data-new="${k}" aria-pressed="${state.newPicked.includes(k)}" title="${esc(AGENTS[k].role)}">${esc(agentName(k))}</button>`).join("");
+  document.querySelectorAll("[data-new]").forEach((b) => b.addEventListener("click", () => {
+    const k = b.dataset.new;
+    state.newPicked = state.newPicked.includes(k) ? state.newPicked.filter((x) => x !== k) : [...state.newPicked, k];
+    renderNewChips();
+  }));
+}
+
+async function startThread({ mode, agents, client_id, title, first }) {
+  try {
+    const out = await callApi("/api/command-center/threads", { mode, agents, client_id, title });
+    state.threads.unshift(out.thread);
+    await openThread(out.thread.id);
+    if (first) await sendMessage(first);
+  } catch (err) {
+    banner(`Could not start the conversation: ${err.message}`, true);
+  }
+}
+
+async function sendMessage(text) {
+  const t = currentThread();
+  if (!t || !text.trim()) return;
+  try {
+    await callApi(`/api/command-center/threads/${t.id}/messages`, { content: text, agents: state.chatTargets });
+    state.chatTargets = [];
+    await loadMessages();
+  } catch (err) {
+    banner(`Message not sent: ${err.message}`, true);
+  }
+}
+
+$("new-chat-btn").addEventListener("click", () => openNewPanel("direct"));
+$("new-meeting-btn").addEventListener("click", () => openNewPanel("meeting"));
+$("new-cancel").addEventListener("click", () => { $("new-panel").hidden = true; $("chat-panel").hidden = false; });
+$("new-start").addEventListener("click", async () => {
+  if (!state.newPicked.length) { banner("Pick at least one agent.", true); return; }
+  const client_id = $("new-client").value || null;
+  await startThread({
+    mode: state.newMode,
+    agents: state.newPicked,
+    client_id,
+    title: state.newMode === "meeting" && client_id ? `${clientName(client_id)} review` : undefined,
+  });
+});
+$("chat-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("chat-input");
+  const text = input.value;
+  input.value = "";
+  await sendMessage(text);
+});
+$("chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("chat-form").requestSubmit(); }
 });
 
 init();

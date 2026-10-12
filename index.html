@@ -43,6 +43,13 @@
     </header>
     <p id="demo-msg" class="banner" hidden></p>
 
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" role="tab" id="tab-agents" aria-controls="view-agents" aria-selected="true" data-tab="agents">Agents</button>
+      <button class="tab" role="tab" id="tab-clients" aria-controls="view-clients" aria-selected="false" data-tab="clients">Clients</button>
+      <button class="tab" role="tab" id="tab-talk" aria-controls="view-talk" aria-selected="false" data-tab="talk">Conversations</button>
+    </nav>
+
+    <div id="view-agents" class="view" role="tabpanel" aria-labelledby="tab-agents">
     <section class="kpis" aria-label="Key numbers">
       <div class="kpi"><div class="kpi-label">Runs, last 7 days</div><div id="kpi-runs" class="kpi-val">0</div></div>
       <div class="kpi"><div class="kpi-label">Success rate, last 30 days</div><div id="kpi-success" class="kpi-val">0%</div></div>
@@ -99,18 +106,72 @@
           <ul id="alerts" class="alerts"></ul>
         </section>
 
-        <section class="card ask" aria-labelledby="ask-h">
-          <h2 id="ask-h">Ask the agents</h2>
-          <div id="ask-log" class="ask-log" aria-live="polite"></div>
-          <form id="ask-form" class="ask-form">
-            <label for="ask-input" class="small muted">Question about recent agent activity</label>
-            <div class="row">
-              <input id="ask-input" type="text" placeholder="Why did a client get no ideas last week?" required>
-              <button class="btn btn-primary" type="submit" aria-label="Ask">Ask</button>
-            </div>
-          </form>
+        <section class="card" aria-labelledby="talk-h">
+          <h2 id="talk-h">Talk to the agents</h2>
+          <p class="small muted">Ask one agent, several, or call a meeting with all of them. Conversations are saved.</p>
+          <div class="row-btns">
+            <button class="btn" type="button" data-open-talk="new">New conversation</button>
+            <button class="btn btn-primary" type="button" data-open-talk="meeting">Call a meeting</button>
+          </div>
         </section>
       </aside>
+    </div>
+    </div>
+
+    <!-- Clients -->
+    <div id="view-clients" class="view" role="tabpanel" aria-labelledby="tab-clients" hidden>
+      <section class="kpis" aria-label="Client totals">
+        <div class="kpi"><div class="kpi-label">Clients</div><div id="ck-clients" class="kpi-val">0</div></div>
+        <div class="kpi"><div class="kpi-label">Ideas waiting for review</div><div id="ck-ideas" class="kpi-val">0</div></div>
+        <div class="kpi"><div class="kpi-label">Pieces in production</div><div id="ck-pieces" class="kpi-val">0</div></div>
+        <div class="kpi"><div class="kpi-label">Ready for VA</div><div id="ck-ready" class="kpi-val">0</div></div>
+      </section>
+      <div id="client-cards" class="client-cards"></div>
+    </div>
+
+    <!-- Conversations -->
+    <div id="view-talk" class="view" role="tabpanel" aria-labelledby="tab-talk" hidden>
+      <div class="talk">
+        <aside class="card threads">
+          <div class="card-head"><h2>Conversations</h2></div>
+          <div class="row-btns">
+            <button class="btn" type="button" id="new-chat-btn">New</button>
+            <button class="btn btn-primary" type="button" id="new-meeting-btn">Call a meeting</button>
+          </div>
+          <ul id="thread-list" class="thread-list"></ul>
+        </aside>
+
+        <section class="card chat">
+          <div id="new-panel" class="new-panel" hidden>
+            <h2 id="new-title">New conversation</h2>
+            <p id="new-help" class="small muted">Pick who you want to talk to.</p>
+            <div id="new-agents" class="chips" role="group" aria-label="Agents"></div>
+            <label for="new-client" class="small muted">About a client (optional)</label>
+            <select id="new-client"><option value="">All clients</option></select>
+            <div class="row-btns">
+              <button class="btn" type="button" id="new-cancel">Cancel</button>
+              <button class="btn btn-primary" type="button" id="new-start">Start</button>
+            </div>
+          </div>
+
+          <div id="chat-panel" class="chat-panel">
+            <div class="card-head">
+              <h2 id="chat-title">Pick or start a conversation</h2>
+              <span id="chat-who" class="small muted"></span>
+            </div>
+            <div id="chat-log" class="chat-log" aria-live="polite"></div>
+            <form id="chat-form" class="chat-form" hidden>
+              <div id="chat-targets" class="chips small-chips" role="group" aria-label="Who should answer"></div>
+              <label for="chat-input" class="sr-only">Message</label>
+              <div class="row">
+                <textarea id="chat-input" rows="2" placeholder="Ask a question. Type @ and an agent's name to bring them in." required></textarea>
+                <button class="btn btn-primary" type="submit">Send</button>
+              </div>
+              <p class="small muted">Each agent answers with Claude, using the live run log, client data and its own job description. Agents report and explain; they don't take actions from chat.</p>
+            </form>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
 
