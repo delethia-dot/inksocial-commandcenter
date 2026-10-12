@@ -125,10 +125,8 @@ async function enterApp() {
 async function loadClients() {
   const { data } = await sb.from("clients").select("id,name").order("name");
   state.clients = Object.fromEntries((data || []).map((c) => [c.id, c.name]));
-  const sel = $("demo-client");
-  sel.innerHTML = (data || []).map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
-  const test = (data || []).find((c) => /test/i.test(c.name));
-  if (test) sel.value = test.id;
+  $("run-client").innerHTML = (data || []).map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+  state.testClientId = ((data || []).find((c) => /test/i.test(c.name)) || {}).id || null;
 }
 
 async function reload() {
@@ -508,30 +506,64 @@ function banner(text, bad = false) {
   banner.t = setTimeout(() => { el.hidden = true; }, 12000);
 }
 
-$("run-notify").addEventListener("change", () => {
-  $("demo-btn").textContent = $("run-notify").checked ? "Run for client now" : "Run research now";
-});
+// ── run research dialog ──────────────────────────────────────────────────────
+// Running research is an action, so it lives in a dialog opened from the places
+// you'd want it (header, Test runs tab, a client card, Richard's profile) rather
+// than a header dropdown that looks like it filters the page.
+let runReturnFocus = null;
 
-$("demo-btn").addEventListener("click", async () => {
-  const btn = $("demo-btn");
-  const notify = $("run-notify").checked;
-  const name = clientName($("demo-client").value);
-  if (notify && !confirm(`Run research for ${name} now and email them their new ideas? This counts as a real client run.`)) return;
-  btn.disabled = true;
+function runKind() { return document.querySelector('input[name="run-kind"]:checked').value; }
+
+function syncRunDialog() {
+  const name = clientName($("run-client").value);
+  $("run-start").textContent = runKind() === "client" ? `Run for ${name} and email them` : "Start test run";
+}
+
+function openRunDialog({ clientId, kind } = {}, from) {
+  runReturnFocus = from || document.activeElement;
+  const sel = $("run-client");
+  sel.value = clientId || (kind === "test" && state.testClientId) || sel.value || state.testClientId || "";
+  if (!sel.value && sel.options.length) sel.selectedIndex = 0;
+  document.querySelector(`input[name="run-kind"][value="${kind === "client" ? "client" : "test"}"]`).checked = true;
+  syncRunDialog();
+  $("run-start").disabled = false;
+  $("run-dialog").showModal();
+  sel.focus();
+}
+
+function closeRunDialog() {
+  $("run-dialog").close();
+}
+
+$("run-dialog").addEventListener("close", () => {
+  if (runReturnFocus && runReturnFocus.focus && document.contains(runReturnFocus)) runReturnFocus.focus();
+});
+$("run-client").addEventListener("change", syncRunDialog);
+document.querySelectorAll('input[name="run-kind"]').forEach((r) => r.addEventListener("change", syncRunDialog));
+$("run-cancel").addEventListener("click", closeRunDialog);
+$("run-dialog").addEventListener("click", (e) => { if (e.target === $("run-dialog")) closeRunDialog(); });
+document.querySelectorAll("[data-run-open]").forEach((b) => b.addEventListener("click", () =>
+  openRunDialog({ kind: b.dataset.runKind }, b)));
+
+$("run-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const clientId = $("run-client").value;
+  const notify = runKind() === "client";
+  const name = clientName(clientId);
+  $("run-start").disabled = true;
   try {
-    await callApi("/api/command-center/demo-run", { client_id: $("demo-client").value, notify });
+    await callApi("/api/command-center/demo-run", { client_id: clientId, notify });
+    closeRunDialog();
     state.followLatest = true;
     showTab(notify ? "agents" : "test");
     banner(notify
       ? `Richard is running research for ${name}. They'll get an email when the ideas are ready.`
       : `Test run started for ${name}. Richard does the real research, ${name} isn't emailed, and it stays on this tab. Steps appear below as they happen.`);
   } catch (err) {
+    closeRunDialog();
     banner(`Could not start the run: ${err.message}`, true);
-  } finally {
-    setTimeout(() => { btn.disabled = false; }, 4000);
   }
 });
-
 
 // ── agent profile ────────────────────────────────────────────────────────────
 let drawerReturnFocus = null;
@@ -584,12 +616,20 @@ function renderDrawer() {
         <span class="dot ${statusDot(r.status)}"></span><span class="d-run-main">${esc(clientName(r.client_id))}${r.demo ? " (test)" : ""}</span>
         <span class="d-run-meta">${esc(statusLabel(r.status))}, ${esc(clock(r.started_at))}</span></button></li>`).join("")
       || `<li class="empty">No runs in the last 30 days.</li>`}</ul>
-    <button type="button" class="btn btn-primary d-talk" id="drawer-talk">Talk to ${esc(a.name)}</button>`;
+    <div class="row-btns d-talk">
+      ${key === "research" ? `<button type="button" class="btn btn-primary" id="drawer-run">Run research</button>` : ""}
+      <button type="button" class="btn${key === "research" ? "" : " btn-primary"}" id="drawer-talk">Talk to ${esc(a.name)}</button>
+    </div>`;
   document.querySelectorAll("[data-open-agent]").forEach((b) => b.addEventListener("click", () => { state.drawerAgent = b.dataset.openAgent; renderDrawer(); }));
   document.querySelectorAll("[data-drawer-run]").forEach((b) => b.addEventListener("click", () => {
     closeDrawer(); showTab("agents"); selectRun(b.dataset.drawerRun);
     $("tl-h").scrollIntoView({ behavior: "smooth", block: "start" });
   }));
+  if ($("drawer-run")) $("drawer-run").addEventListener("click", () => {
+    const back = drawerReturnFocus;
+    closeDrawer();
+    openRunDialog({ kind: state.scope === "test" ? "test" : undefined }, back);
+  });
   $("drawer-talk").addEventListener("click", async () => {
     const k = state.drawerAgent;
     closeDrawer(); showTab("talk");
@@ -600,7 +640,7 @@ function renderDrawer() {
 $("drawer-close").addEventListener("click", closeDrawer);
 $("drawer-backdrop").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeDrawer();
+  if (e.key === "Escape" && !$("run-dialog").open) closeDrawer();
   if (e.key === "Tab" && !$("drawer").hidden) {
     const f = [...$("drawer").querySelectorAll("button, [href], input, select, textarea")].filter((x) => !x.disabled);
     if (!f.length) return;
@@ -713,12 +753,15 @@ function renderClients() {
       <div class="stages">${stages}</div>
       <div class="small muted">${runs7.length} agent run${runs7.length === 1 ? "" : "s"} this week${lastRun ? ` · last: ${esc(agentName(lastRun.agent))}, <span data-ago="${esc(lastRun.started_at)}">${ago(lastRun.started_at)}</span>` : ""}</div>
       <div class="row-btns">
+        <button class="btn btn-primary" type="button" data-client-run="${esc(c.id)}">Run research</button>
         <button class="btn" type="button" data-client-runs="${esc(c.id)}">View runs</button>
         <button class="btn" type="button" data-client-meet="${esc(c.id)}">Review with the agents</button>
       </div>
     </article>`;
   }).join("") || `<p class="empty">No clients yet.</p>`;
 
+  document.querySelectorAll("[data-client-run]").forEach((b) => b.addEventListener("click", () =>
+    openRunDialog({ clientId: b.dataset.clientRun }, b)));
   document.querySelectorAll("[data-client-runs]").forEach((b) => b.addEventListener("click", () => {
     state.clientFilter = b.dataset.clientRuns;
     showTab("agents");

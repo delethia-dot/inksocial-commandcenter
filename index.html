@@ -36,14 +36,7 @@
       <span class="pill live-pill" tabindex="0" aria-describedby="live-help"><span id="live-dot" class="dot dot-idle"></span><span id="live-label">Connecting</span>
         <span id="live-help" role="tooltip" class="tip-box">This page updates the moment any agent starts, finishes a step or hands off, whether it ran on a schedule, was started by a client, or you ran it here. Client data also refreshes every minute.</span>
       </span>
-      <div class="demo">
-        <label for="demo-client" class="sr-only">Client to run research for</label>
-        <select id="demo-client"></select>
-        <label class="notify-opt" title="Off: a test run. Richard does the real research but the client isn't emailed, and it stays out of client stats. On: a real run for the client, counted like a scheduled one.">
-          <input type="checkbox" id="run-notify"> Notify client
-        </label>
-        <button id="demo-btn" class="btn btn-primary" type="button">Run research now</button>
-      </div>
+      <button id="run-open" class="btn btn-primary" type="button" data-run-open>Run research</button>
       <button id="signout-btn" class="btn" type="button">Sign out</button>
     </header>
     <p id="demo-msg" class="banner" hidden></p>
@@ -56,7 +49,10 @@
     </nav>
 
     <div id="view-agents" class="view" role="tabpanel" aria-labelledby="tab-agents">
-    <p id="scope-note" class="scope-note" hidden>Test runs are real research runs started here without notifying the client. They live on this tab and never count toward client stats, alerts or client cards.</p>
+    <div id="scope-note" class="scope-note" hidden>
+      <p>Test runs are real research runs started here without notifying the client. They live on this tab and never count toward client stats, alerts or client cards.</p>
+      <button type="button" class="btn btn-primary" data-run-open data-run-kind="test">Start a test run</button>
+    </div>
     <section class="kpis" aria-label="Key numbers">
       <div class="kpi"><div class="kpi-label">Runs, last 7 days</div><div id="kpi-runs" class="kpi-val">0</div></div>
       <div class="kpi"><div class="kpi-label">Success rate, last 30 days</div><div id="kpi-success" class="kpi-val">0%</div></div>
@@ -189,6 +185,31 @@
   </div>
 
   <!-- Agent profile -->
+
+  <!-- Run research -->
+  <dialog id="run-dialog" class="run-dialog" aria-labelledby="run-title">
+    <form id="run-form" method="dialog">
+      <h2 id="run-title">Run research</h2>
+      <p class="small muted">Richard scrapes the client's competitors, finds what's outperforming and writes new content ideas. Takes a few minutes.</p>
+      <label for="run-client" class="field-label">Client</label>
+      <select id="run-client" required></select>
+      <fieldset class="run-kinds">
+        <legend class="field-label">Type of run</legend>
+        <label class="run-kind">
+          <input type="radio" name="run-kind" value="test" checked>
+          <span><b>Test run</b><span class="small muted">The client isn't emailed. It shows on the Test runs tab and stays out of client stats.</span></span>
+        </label>
+        <label class="run-kind">
+          <input type="radio" name="run-kind" value="client">
+          <span><b>Client run</b><span class="small muted">Counts like a scheduled run. The client gets an email with their new ideas.</span></span>
+        </label>
+      </fieldset>
+      <div class="run-actions">
+        <button type="button" class="btn" id="run-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="run-start">Start test run</button>
+      </div>
+    </form>
+  </dialog>
   <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
   <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-name" hidden>
     <button type="button" class="drawer-close" id="drawer-close" aria-label="Close agent profile">

@@ -56,7 +56,6 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--accent)
 .app { max-width: 1440px; margin: 0 auto; padding: 24px 32px 48px; display: flex; flex-direction: column; gap: 20px; }
 .top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .top .title { flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; }
-.demo { display: flex; gap: 8px; }
 .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; color: var(--muted); }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .dot-ok { background: var(--ok); }
@@ -153,8 +152,6 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--accent)
 }
 @media (max-width: 640px) {
   .app { padding: 16px; }
-  .demo { width: 100%; }
-  .demo select { flex: 1; min-width: 0; }
   .kpi-val { font-size: 26px; }
   h1 { font-size: 22px; }
 }
@@ -331,11 +328,26 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--accent)
 .msg .who { display: inline-flex; align-items: center; gap: 6px; font-family: var(--sans); font-size: 13px; color: var(--text); letter-spacing: 0; }
 .msg .who .muted { font-size: 12px; }
 
-/* Run research now */
-.notify-opt { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border: 1px solid var(--line);
-  border-radius: 10px; font-size: 14px; color: var(--muted); cursor: pointer; white-space: nowrap; }
-.notify-opt:has(input:checked) { color: var(--text); border-color: var(--accent); }
-.notify-opt input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
-.scope-note { margin: 0; padding: 12px 16px; border-radius: 10px; border: 1px dashed var(--gate); background: var(--gate-bg); color: #c5d6f5; font-size: 14px; }
+/* Run research dialog */
+.scope-note { margin: 0; padding: 12px 16px; border-radius: 10px; border: 1px dashed var(--gate); background: var(--gate-bg); color: #c5d6f5; font-size: 14px;
+  display: flex; align-items: center; gap: 16px; }
+.scope-note[hidden] { display: none; }
+.scope-note p { margin: 0; flex: 1; }
+.run-dialog { width: min(480px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); }
+.run-dialog::backdrop { background: rgba(8,9,11,.6); }
+.run-dialog form { display: flex; flex-direction: column; gap: 8px; padding: 24px; }
+.run-dialog h2 { font-size: 20px; }
+.run-dialog p { margin: 0 0 8px; }
+.field-label { font-size: 13px; color: var(--muted); }
+.run-dialog select { width: 100%; margin-bottom: 8px; }
+.run-kinds { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.run-kinds legend { padding: 0; margin-bottom: 8px; }
+.run-kind { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.run-kind:has(input:checked) { border-color: var(--accent); background: var(--warn-bg); }
+.run-kind input { width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--accent); flex: none; }
+.run-kind > span { display: flex; flex-direction: column; gap: 2px; }
+.run-kind:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.run-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .btn-clear { height: 36px; font-size: 13px; }
-@media (max-width: 640px) { .demo { flex-wrap: wrap; } .demo select { flex: 1 1 100%; } }
+@media (max-width: 640px) { .scope-note { flex-direction: column; align-items: stretch; } }
