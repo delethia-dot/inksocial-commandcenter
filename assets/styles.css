@@ -351,3 +351,44 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--accent)
 .run-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .btn-clear { height: 36px; font-size: 13px; }
 @media (max-width: 640px) { .scope-note { flex-direction: column; align-items: stretch; } }
+
+/* Client picker for the Agents and Test runs views */
+.view-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.view-label { font-size: 13px; color: var(--muted); }
+.view-bar select { min-width: 220px; font-weight: 500; }
+.view-bar select.filtered { border-color: var(--accent); color: var(--accent); }
+.view-bar .small { flex: 1 1 260px; }
+
+/* Clients list: one row per client */
+.clist-head { flex-wrap: wrap; gap: 12px; }
+.clist-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+.clist-tools input { width: 220px; }
+.clist-foot { margin: 12px 0 0; }
+.clients-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.clients-table th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 0 12px 8px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.clients-table td { padding: 12px 12px 12px 0; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+.clients-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.clients-table tbody tr[data-client] { cursor: pointer; }
+.clients-table tbody tr[data-client]:hover { background: var(--surface-2); }
+.clients-table tbody tr[data-client]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cl-name { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cl-actions { text-align: right; white-space: nowrap; }
+.btn-sm { height: 36px; padding: 0 12px; font-size: 13px; }
+.bad-text { color: var(--bad-text); }
+.warn-text { color: var(--warn); }
+.d-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.d-actions .btn { width: 100%; }
+.drawer .client-stats { margin: 4px 0 8px; }
+
+@media (max-width: 760px) {
+  .clist-tools, .clist-tools input, .clist-tools select { width: 100%; }
+  .clients-table thead { display: none; }
+  .clients-table, .clients-table tbody, .clients-table tr, .clients-table td { display: block; width: 100%; }
+  .clients-table tr[data-client] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+  .clients-table td { border: 0; padding: 2px 0; }
+  .clients-table td[data-label="Client"], .clients-table td[data-label="Latest research"], .clients-table .cl-actions { grid-column: 1 / -1; }
+  .clients-table td.num { text-align: left; }
+  .clients-table td.num::before { content: attr(data-label) ": "; color: var(--muted); font-size: 12px; }
+  .cl-actions { text-align: left; }
+  .view-bar select { flex: 1 1 100%; }
+}

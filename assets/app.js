@@ -125,7 +125,10 @@ async function enterApp() {
 async function loadClients() {
   const { data } = await sb.from("clients").select("id,name").order("name");
   state.clients = Object.fromEntries((data || []).map((c) => [c.id, c.name]));
-  $("run-client").innerHTML = (data || []).map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+  const opts = (data || []).map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+  $("run-client").innerHTML = opts;
+  $("view-client").innerHTML = `<option value="">All clients</option>${opts}`;
+  $("view-client").value = state.clientFilter || "";
   state.testClientId = ((data || []).find((c) => /test/i.test(c.name)) || {}).id || null;
 }
 
@@ -153,7 +156,9 @@ async function reload() {
 function applyScope() {
   const visible = state.allRuns.filter((r) => !r.archived);
   state.clientRuns = visible.filter((r) => !r.demo);
-  state.runs = state.scope === "test" ? visible.filter((r) => r.demo) : state.clientRuns;
+  const scoped = state.scope === "test" ? visible.filter((r) => r.demo) : state.clientRuns;
+  // The "Showing" picker narrows everything on the Agents and Test runs tabs to one client.
+  state.runs = state.clientFilter ? scoped.filter((r) => r.client_id === state.clientFilter) : scoped;
   const ids = new Set(state.runs.map((r) => r.id));
   state.events = state.allEvents.filter((e) => ids.has(e.run_id));
   if (state.followLatest || !state.runs.find((r) => r.id === state.selectedRunId)) {
@@ -199,6 +204,7 @@ function render() {
   renderRuns();
   renderTimeline();
   if (state.drawerAgent) renderDrawer();
+  if (state.drawerClient) renderClientDrawer();
 }
 
 function within(ts, days) { return Date.now() - new Date(ts).getTime() <= days * DAY; }
@@ -386,14 +392,7 @@ $("alerts-clear").addEventListener("click", () => {
 $("alerts-toggle").addEventListener("click", () => { state.showDismissed = !state.showDismissed; renderAlerts(); });
 
 function renderRuns() {
-  const rows = state.runs
-    .filter((r) => !state.clientFilter || r.client_id === state.clientFilter)
-    .slice(0, 40);
-  $("runs-h").innerHTML = state.clientFilter
-    ? `Recent runs · ${esc(clientName(state.clientFilter))} <button type="button" class="chip small" id="clear-client-filter">Show all clients</button>`
-    : "Recent runs";
-  const clr = $("clear-client-filter");
-  if (clr) clr.addEventListener("click", () => { state.clientFilter = null; renderRuns(); });
+  const rows = state.runs.slice(0, 40);
   $("runs-body").innerHTML = rows.length ? rows.map((r) => `
     <tr data-run="${esc(r.id)}" class="${r.id === state.selectedRunId ? "selected" : ""}">
       <td class="mono small" title="${esc(clock(r.started_at))}">${esc(clock(r.started_at))}</td>
@@ -404,7 +403,8 @@ function renderRuns() {
       <td class="small">${esc(r.error || r.summary || "")}</td>
     </tr>`).join("")
     : `<tr><td colspan="6" class="empty">${state.scope === "test"
-        ? "No test runs. Pick a client and use Run research now to start one."
+        ? (state.clientFilter ? `No test runs for ${esc(clientName(state.clientFilter))}.` : "No test runs. Use Start a test run above to begin one.")
+        : state.clientFilter ? `No runs for ${esc(clientName(state.clientFilter))} in the last 30 days.`
         : "No client runs yet. They appear here the moment a scheduled run starts or a client approves something."}</td></tr>`;
   $("clear-tests").hidden = !(state.scope === "test" && state.runs.some((r) => r.status !== "running"));
   document.querySelectorAll("#runs-body tr[data-run]").forEach((tr) => tr.addEventListener("click", () => selectRun(tr.dataset.run)));
@@ -522,7 +522,7 @@ function syncRunDialog() {
 function openRunDialog({ clientId, kind } = {}, from) {
   runReturnFocus = from || document.activeElement;
   const sel = $("run-client");
-  sel.value = clientId || (kind === "test" && state.testClientId) || sel.value || state.testClientId || "";
+  sel.value = clientId || state.clientFilter || (kind === "test" && state.testClientId) || sel.value || state.testClientId || "";
   if (!sel.value && sel.options.length) sel.selectedIndex = 0;
   document.querySelector(`input[name="run-kind"][value="${kind === "client" ? "client" : "test"}"]`).checked = true;
   syncRunDialog();
@@ -569,6 +569,7 @@ $("run-form").addEventListener("submit", async (e) => {
 let drawerReturnFocus = null;
 
 function openDrawer(key, from) {
+  state.drawerClient = null;
   state.drawerAgent = key;
   drawerReturnFocus = from || document.activeElement;
   renderDrawer();
@@ -578,8 +579,20 @@ function openDrawer(key, from) {
   $("drawer-close").focus();
 }
 
+function openClientDrawer(id, from) {
+  state.drawerAgent = null;
+  state.drawerClient = id;
+  drawerReturnFocus = from || document.activeElement;
+  renderClientDrawer();
+  $("drawer").hidden = false;
+  $("drawer-backdrop").hidden = false;
+  requestAnimationFrame(() => $("drawer").classList.add("open"));
+  $("drawer-close").focus();
+}
+
 function closeDrawer() {
   if ($("drawer").hidden) return;
+  state.drawerClient = null;
   $("drawer").classList.remove("open");
   $("drawer").hidden = true;
   $("drawer-backdrop").hidden = true;
@@ -628,7 +641,7 @@ function renderDrawer() {
   if ($("drawer-run")) $("drawer-run").addEventListener("click", () => {
     const back = drawerReturnFocus;
     closeDrawer();
-    openRunDialog({ kind: state.scope === "test" ? "test" : undefined }, back);
+    openRunDialog({ clientId: state.clientFilter, kind: state.scope === "test" ? "test" : undefined }, back);
   });
   $("drawer-talk").addEventListener("click", async () => {
     const k = state.drawerAgent;
@@ -649,6 +662,20 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ── client view picker (Agents and Test runs) ───────────────────────────────
+function setClientFilter(id) {
+  state.clientFilter = id || null;
+  $("view-client").value = state.clientFilter || "";
+  $("view-note").textContent = state.clientFilter
+    ? `Only ${clientName(state.clientFilter)}: the numbers, map, timeline, alerts and runs below.`
+    : "Every client combined. Pick a client to see only their agent activity.";
+  $("view-client").classList.toggle("filtered", !!state.clientFilter);
+  state.followLatest = true;
+  applyScope();
+  render();
+}
+$("view-client").addEventListener("change", (e) => setClientFilter(e.target.value));
+
 // ── tabs ─────────────────────────────────────────────────────────────────────
 const TABS = ["agents", "test", "clients", "talk"];
 
@@ -660,7 +687,6 @@ function showTab(name) {
   const scope = name === "test" ? "test" : "client";
   if (scope !== state.scope) {
     state.scope = scope;
-    state.clientFilter = null;
     state.followLatest = true;
     applyScope();
     render();
@@ -714,71 +740,113 @@ function clientAlertCount(clientId) {
     + state.allEvents.filter((e) => ids.has(e.run_id) && e.kind === "alert" && !e.dismissed && !e.message.startsWith("Run failed:")).length;
 }
 
+function clientSummary(c) {
+  const latest = state.research.find((r) => r.client_id === c.id);
+  const pcs = state.pieces.filter((p) => p.client_id === c.id);
+  return {
+    c, latest, pcs,
+    ideas: state.ideas.filter((i) => i.client_id === c.id).length,
+    inProd: pcs.filter((p) => p.status !== "Scheduled").length,
+    ready: pcs.filter((p) => p.status === "Ready for VA").length,
+    alerts: clientAlertCount(c.id),
+  };
+}
+
+function statusClass(st) { return st === "Active" ? "ok" : st === "Onboarding" ? "warn" : ""; }
+
+// One row per client so the list stays readable at 5 clients or 200.
+// Details open in the side panel.
 function renderClients() {
-  const rows = state.clientRows;
-  const active = state.pieces.filter((p) => p.status !== "Scheduled").length;
-  const ready = state.pieces.filter((p) => p.status === "Ready for VA").length;
-  $("ck-clients").textContent = rows.length;
+  const all = state.clientRows.map(clientSummary);
+  $("ck-clients").textContent = all.length;
   $("ck-ideas").textContent = state.ideas.length;
-  $("ck-pieces").textContent = active;
-  $("ck-ready").textContent = ready;
+  $("ck-pieces").textContent = state.pieces.filter((p) => p.status !== "Scheduled").length;
+  $("ck-ready").textContent = state.pieces.filter((p) => p.status === "Ready for VA").length;
 
-  $("client-cards").innerHTML = rows.map((c) => {
-    const latest = state.research.find((r) => r.client_id === c.id);
-    const ideas = state.ideas.filter((i) => i.client_id === c.id).length;
-    const pcs = state.pieces.filter((p) => p.client_id === c.id);
-    const counts = Object.fromEntries(STAGES.map((st) => [st, pcs.filter((p) => p.status === st).length]));
-    const inProd = pcs.filter((p) => p.status !== "Scheduled").length;
-    const runs7 = state.clientRuns.filter((r) => r.client_id === c.id && within(r.started_at, 7));
-    const alerts = clientAlertCount(c.id);
-    const lastRun = state.clientRuns.find((r) => r.client_id === c.id);
-    const statusCls = c.subscription_status === "Active" ? "ok" : c.subscription_status === "Onboarding" ? "warn" : "";
-    const cadence = (c.research_cadence_weeks || 1) === 1 ? "weekly" : `every ${c.research_cadence_weeks} weeks`;
-    const notify = [c.notification_email && "email", c.notification_slack && "Slack"].filter(Boolean).join(" + ") || "no notifications";
+  const q = $("client-search").value.trim().toLowerCase();
+  const st = $("client-status").value;
+  const sort = $("client-sort").value;
+  let rows = all.filter((x) => (!q || x.c.name.toLowerCase().includes(q))
+    && (!st || (st === "other" ? !["Active", "Onboarding"].includes(x.c.subscription_status) : x.c.subscription_status === st)));
+  const byName = (a, b) => a.c.name.localeCompare(b.c.name);
+  if (sort === "name") rows.sort(byName);
+  else if (sort === "ideas") rows.sort((a, b) => b.ideas - a.ideas || byName(a, b));
+  else rows.sort((a, b) => b.alerts - a.alerts || b.ready - a.ready || b.ideas - a.ideas || byName(a, b));
+
+  $("client-rows").innerHTML = rows.map((x) => {
+    const { c, latest } = x;
     const research = latest
-      ? `<p class="client-research${(latest.analysis || "").trim() ? "" : " empty"}">Latest research, week of ${esc(latest.week_of)}: ${latest.post_count} posts, ${latest.outlier_count} outliers${(latest.analysis || "").trim() ? "" : ", analysis empty"}</p>`
-      : `<p class="client-research muted">No research yet</p>`;
-    const stages = STAGES.filter((st) => counts[st]).map((st) =>
-      `<span class="stage${st === "Ready for VA" ? " stuck" : ""}" title="${esc(st)}"><b>${counts[st]}</b> ${esc(STAGE_SHORT[st])}</span>`).join("")
-      || `<span class="small muted">No content in production</span>`;
-    return `<article class="client">
-      <div class="client-head"><h3>${esc(c.name)}</h3><span class="badge ${statusCls}">${esc(c.subscription_status || "Unknown")}</span></div>
-      <div class="client-settings">Video ${c.video_enabled === false ? "off (analysis only)" : "on"} · Blog ${c.blog_enabled ? "on" : "off"} · Research ${cadence} · ${esc(notify)}</div>
-      <div class="client-stats">
-        <div class="cstat"><div class="v">${ideas}</div><div class="l">Ideas to review</div></div>
-        <div class="cstat"><div class="v">${inProd}</div><div class="l">In production</div></div>
-        <div class="cstat${alerts ? " bad" : ""}"><div class="v">${alerts}</div><div class="l">Alerts, 7 days</div></div>
-      </div>
-      ${research}
-      <div class="stages">${stages}</div>
-      <div class="small muted">${runs7.length} agent run${runs7.length === 1 ? "" : "s"} this week${lastRun ? ` · last: ${esc(agentName(lastRun.agent))}, <span data-ago="${esc(lastRun.started_at)}">${ago(lastRun.started_at)}</span>` : ""}</div>
-      <div class="row-btns">
-        <button class="btn btn-primary" type="button" data-client-run="${esc(c.id)}">Run research</button>
-        <button class="btn" type="button" data-client-runs="${esc(c.id)}">View runs</button>
-        <button class="btn" type="button" data-client-meet="${esc(c.id)}">Review with the agents</button>
-      </div>
-    </article>`;
-  }).join("") || `<p class="empty">No clients yet.</p>`;
+      ? `<span class="${(latest.analysis || "").trim() ? "" : "bad-text"}">Week of ${esc(latest.week_of)}${(latest.analysis || "").trim() ? "" : ", analysis empty"}</span>`
+      : `<span class="muted">None yet</span>`;
+    return `<tr data-client="${esc(c.id)}" tabindex="0" aria-label="Open ${esc(c.name)}">
+      <td data-label="Client"><div class="cl-name">${esc(c.name)} <span class="badge ${statusClass(c.subscription_status)}">${esc(c.subscription_status || "Unknown")}</span></div>
+        <div class="small muted">Video ${c.video_enabled === false ? "off" : "on"} · Blog ${c.blog_enabled ? "on" : "off"}</div></td>
+      <td class="num" data-label="Ideas to review">${x.ideas}</td>
+      <td class="num" data-label="In production">${x.inProd}</td>
+      <td class="num${x.ready ? " warn-text" : ""}" data-label="Ready for VA">${x.ready}</td>
+      <td class="num${x.alerts ? " bad-text" : ""}" data-label="Alerts, 7 days">${x.alerts}</td>
+      <td class="small" data-label="Latest research">${research}</td>
+      <td class="cl-actions"><button class="btn btn-sm" type="button" data-client-run="${esc(c.id)}">Run research</button></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="7" class="empty">${all.length ? "No clients match." : "No clients yet."}</td></tr>`;
+  $("client-count").textContent = all.length ? `Showing ${rows.length} of ${all.length} clients. Select a client for details.` : "";
 
-  document.querySelectorAll("[data-client-run]").forEach((b) => b.addEventListener("click", () =>
+  document.querySelectorAll("#client-rows tr[data-client]").forEach((tr) => {
+    tr.addEventListener("click", (e) => { if (!e.target.closest("button")) openClientDrawer(tr.dataset.client, tr); });
+    tr.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target === tr) openClientDrawer(tr.dataset.client, tr); });
+  });
+  document.querySelectorAll("#client-rows [data-client-run]").forEach((b) => b.addEventListener("click", () =>
     openRunDialog({ clientId: b.dataset.clientRun }, b)));
-  document.querySelectorAll("[data-client-runs]").forEach((b) => b.addEventListener("click", () => {
-    state.clientFilter = b.dataset.clientRuns;
-    showTab("agents");
-    renderRuns();
-    $("runs-h").scrollIntoView({ behavior: "smooth", block: "start" });
-  }));
-  document.querySelectorAll("[data-client-meet]").forEach((b) => b.addEventListener("click", async () => {
-    const id = b.dataset.clientMeet;
-    showTab("talk");
+  if (state.drawerClient) renderClientDrawer();
+}
+["client-search", "client-status", "client-sort"].forEach((id) => $(id).addEventListener("input", renderClients));
+
+function renderClientDrawer() {
+  const c = state.clientRows.find((x) => x.id === state.drawerClient);
+  if (!c) return;
+  const x = clientSummary(c);
+  const counts = Object.fromEntries(STAGES.map((st) => [st, x.pcs.filter((p) => p.status === st).length]));
+  const runs7 = state.clientRuns.filter((r) => r.client_id === c.id && within(r.started_at, 7));
+  const lastRun = state.clientRuns.find((r) => r.client_id === c.id);
+  const cadence = (c.research_cadence_weeks || 1) === 1 ? "weekly" : `every ${c.research_cadence_weeks} weeks`;
+  const notify = [c.notification_email && "email", c.notification_slack && "Slack"].filter(Boolean).join(" and ") || "none";
+  const latest = x.latest;
+  const research = latest
+    ? `Week of ${esc(latest.week_of)}: ${latest.post_count} posts, ${latest.outlier_count} outliers${(latest.analysis || "").trim() ? "" : ". The analysis came back empty."}`
+    : "No research yet.";
+  const stages = STAGES.filter((st) => counts[st]).map((st) =>
+    `<span class="stage${st === "Ready for VA" ? " stuck" : ""}"><b>${counts[st]}</b> ${esc(STAGE_SHORT[st])}</span>`).join("")
+    || `<span class="small muted">No content in production.</span>`;
+  $("drawer-body").innerHTML = `
+    <div class="d-head"><div><h2 id="drawer-name">${esc(c.name)}</h2><p class="d-role"><span class="badge ${statusClass(c.subscription_status)}">${esc(c.subscription_status || "Unknown")}</span></p></div></div>
+    <div class="client-stats">
+      <div class="cstat"><div class="v">${x.ideas}</div><div class="l">Ideas to review</div></div>
+      <div class="cstat"><div class="v">${x.inProd}</div><div class="l">In production</div></div>
+      <div class="cstat${x.alerts ? " bad" : ""}"><div class="v">${x.alerts}</div><div class="l">Alerts, 7 days</div></div>
+    </div>
+    <dl class="d-facts">
+      <div><dt>Content in production</dt><dd><div class="stages">${stages}</div></dd></div>
+      <div><dt>Latest research</dt><dd class="${latest && !(latest.analysis || "").trim() ? "bad-text" : ""}">${research}</dd></div>
+      <div><dt>Settings</dt><dd>Video ${c.video_enabled === false ? "off (analysis only)" : "on"}, blog ${c.blog_enabled ? "on" : "off"}, research ${cadence}, notifications by ${esc(notify)}.</dd></div>
+      <div><dt>Agent activity</dt><dd>${runs7.length} run${runs7.length === 1 ? "" : "s"} this week${lastRun ? `. Last: ${esc(agentName(lastRun.agent))}, <span data-ago="${esc(lastRun.started_at)}">${ago(lastRun.started_at)}</span>.` : "."}</dd></div>
+    </dl>
+    <div class="d-actions">
+      <button type="button" class="btn btn-primary" id="cd-activity">See ${esc(c.name)}'s agent activity</button>
+      <button type="button" class="btn" id="cd-run">Run research</button>
+      <button type="button" class="btn" id="cd-meet">Review with the agents</button>
+    </div>`;
+  $("cd-activity").addEventListener("click", () => {
+    closeDrawer(); setClientFilter(c.id); showTab("agents");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  $("cd-run").addEventListener("click", () => { const back = drawerReturnFocus; closeDrawer(); openRunDialog({ clientId: c.id }, back); });
+  $("cd-meet").addEventListener("click", async () => {
+    closeDrawer(); showTab("talk");
     await startThread({
-      mode: "meeting",
-      agents: Object.keys(AGENTS),
-      client_id: id,
-      title: `${clientName(id)} review`,
-      first: `Give me a status review of ${clientName(id)}: what ran, what's waiting on the client, and anything stuck or broken.`,
+      mode: "meeting", agents: Object.keys(AGENTS), client_id: c.id, title: `${c.name} review`,
+      first: `Give me a status review of ${c.name}: what ran, what's waiting on the client, and anything stuck or broken.`,
     });
-  }));
+  });
 }
 
 // ── conversations ────────────────────────────────────────────────────────────

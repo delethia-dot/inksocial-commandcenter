@@ -36,7 +36,6 @@
       <span class="pill live-pill" tabindex="0" aria-describedby="live-help"><span id="live-dot" class="dot dot-idle"></span><span id="live-label">Connecting</span>
         <span id="live-help" role="tooltip" class="tip-box">This page updates the moment any agent starts, finishes a step or hands off, whether it ran on a schedule, was started by a client, or you ran it here. Client data also refreshes every minute.</span>
       </span>
-      <button id="run-open" class="btn btn-primary" type="button" data-run-open>Run research</button>
       <button id="signout-btn" class="btn" type="button">Sign out</button>
     </header>
     <p id="demo-msg" class="banner" hidden></p>
@@ -52,6 +51,11 @@
     <div id="scope-note" class="scope-note" hidden>
       <p>Test runs are real research runs started here without notifying the client. They live on this tab and never count toward client stats, alerts or client cards.</p>
       <button type="button" class="btn btn-primary" data-run-open data-run-kind="test">Start a test run</button>
+    </div>
+    <div class="view-bar">
+      <label for="view-client" class="view-label">Showing</label>
+      <select id="view-client"><option value="">All clients</option></select>
+      <span id="view-note" class="small muted">Every client combined. Pick a client to see only their agent activity.</span>
     </div>
     <section class="kpis" aria-label="Key numbers">
       <div class="kpi"><div class="kpi-label">Runs, last 7 days</div><div id="kpi-runs" class="kpi-val">0</div></div>
@@ -135,7 +139,35 @@
         <div class="kpi"><div class="kpi-label">Pieces in production</div><div id="ck-pieces" class="kpi-val">0</div></div>
         <div class="kpi"><div class="kpi-label">Ready for VA</div><div id="ck-ready" class="kpi-val">0</div></div>
       </section>
-      <div id="client-cards" class="client-cards"></div>
+      <section class="card client-list" aria-labelledby="clist-h">
+        <div class="card-head clist-head">
+          <h2 id="clist-h">All clients</h2>
+          <div class="clist-tools">
+            <label for="client-search" class="sr-only">Search clients</label>
+            <input id="client-search" type="search" placeholder="Search clients" autocomplete="off">
+            <label for="client-status" class="sr-only">Filter by status</label>
+            <select id="client-status">
+              <option value="">Every status</option>
+              <option value="Active">Active</option>
+              <option value="Onboarding">Onboarding</option>
+              <option value="other">Paused or other</option>
+            </select>
+            <label for="client-sort" class="sr-only">Sort clients</label>
+            <select id="client-sort">
+              <option value="attention">Needs attention first</option>
+              <option value="name">Name, A to Z</option>
+              <option value="ideas">Most ideas to review</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="clients-table">
+            <thead><tr><th>Client</th><th class="num">Ideas to review</th><th class="num">In production</th><th class="num">Ready for VA</th><th class="num">Alerts, 7 days</th><th>Latest research</th><th><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody id="client-rows"></tbody>
+          </table>
+        </div>
+        <p id="client-count" class="small muted clist-foot"></p>
+      </section>
     </div>
 
     <!-- Conversations -->
@@ -212,7 +244,7 @@
   </dialog>
   <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
   <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-name" hidden>
-    <button type="button" class="drawer-close" id="drawer-close" aria-label="Close agent profile">
+    <button type="button" class="drawer-close" id="drawer-close" aria-label="Close panel">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
     <div id="drawer-body"></div>
