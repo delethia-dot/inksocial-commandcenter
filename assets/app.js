@@ -21,6 +21,9 @@ const state = {
   selectedRunId: null,
   followLatest: true,
   channel: null,
+  lastUpdate: null,
+  showDismissed: false,
+  drawerAgent: null,
   clientFilter: null,   // client id the runs table is filtered to
   clientRows: [],       // full client rows for the Clients tab
   research: [],
@@ -37,6 +40,11 @@ const state = {
 // ── helpers ──────────────────────────────────────────────────────────────────
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const agentName = (key) => (key === "coordinator" ? "Coordinator" : AGENTS[key]?.name || key);
+const agentRole = (key) => (key === "coordinator" ? "Meeting notes" : AGENTS[key]?.role || "");
+const agentColor = (key) => (key === "coordinator" ? "#F0B44C" : AGENTS[key]?.color || "#A3A8B0");
+function avatar(key, size = "") {
+  return `<span class="av ${size}" style="--av:${agentColor(key)}" aria-hidden="true">${esc(agentName(key).charAt(0))}</span>`;
+}
 const clientName = (id) => (id && state.clients[id]) || (id ? "Unknown client" : "No client");
 
 function ago(ts) {
@@ -103,6 +111,9 @@ async function enterApp() {
   initTabs();
   subscribe();
   setInterval(renderRelativeTimes, 30000);
+  // Backstop: client actions in the portal (approvals, uploads) change data the
+  // live feed doesn't carry until an agent runs, so refresh every minute too.
+  setInterval(() => { reload(); loadClientData(); }, 60000);
   window.addEventListener("resize", drawEdges);
 }
 
@@ -129,6 +140,8 @@ async function reload() {
   }
   state.runs = runs.data || [];
   state.events = events.data || [];
+  state.lastUpdate = new Date();
+  setLive(state.live === false ? "bad" : state.live ? "ok" : "idle", state.live === undefined ? "Connecting" : undefined);
   if (state.followLatest || !state.runs.find((r) => r.id === state.selectedRunId)) {
     state.selectedRunId = state.runs[0]?.id || null;
   }
@@ -148,14 +161,20 @@ function subscribe() {
     .on("postgres_changes", { event: "*", schema: "public", table: "agent_threads" }, scheduleTalkReload)
     .on("postgres_changes", { event: "*", schema: "public", table: "agent_messages" }, scheduleTalkReload)
     .subscribe((status) => {
-      if (status === "SUBSCRIBED") setLive("ok", "Live");
-      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setLive("bad", "Live updates paused");
+      if (status === "SUBSCRIBED") { state.live = true; setLive("ok"); }
+      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") { state.live = false; setLive("bad"); }
     });
 }
 
 function setLive(kind, label) {
+  const when = state.lastUpdate
+    ? state.lastUpdate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : null;
+  const text = label || (kind === "bad"
+    ? `Live updates paused${when ? `, last updated ${when}` : ""}`
+    : `Live${when ? `, updated ${when}` : ""}`);
   $("live-dot").className = `dot ${kind === "ok" ? "dot-ok" : kind === "bad" ? "dot-bad" : "dot-idle"}`;
-  $("live-label").textContent = label;
+  $("live-label").textContent = text;
 }
 
 // ── render ───────────────────────────────────────────────────────────────────
@@ -166,6 +185,7 @@ function render() {
   renderAlerts();
   renderRuns();
   renderTimeline();
+  if (state.drawerAgent) renderDrawer();
 }
 
 function within(ts, days) { return Date.now() - new Date(ts).getTime() <= days * DAY; }
@@ -174,7 +194,7 @@ function renderKpis() {
   const r7 = state.runs.filter((r) => within(r.started_at, 7));
   const done30 = state.runs.filter((r) => r.status === "success" || r.status === "failed");
   const ok30 = done30.filter((r) => r.status === "success").length;
-  const alerts = alertItems().length;
+  const alerts = alertItems().filter((a) => !a.dismissed).length;
   const handoffs = state.events.filter((e) => e.kind === "handoff").length;
   $("kpi-runs").textContent = r7.length;
   $("kpi-success").textContent = done30.length ? `${Math.round((ok30 / done30.length) * 100)}%` : "No runs";
@@ -192,13 +212,13 @@ function nodeHtml(key) {
   const count = state.runs.filter((r) => r.agent === key && within(r.started_at, 7)).length;
   const st = run?.status || "idle";
   const selected = state.runs.find((r) => r.id === state.selectedRunId)?.agent === key;
-  const sub = key === "packaging" && !run
-    ? "Not connected yet"
-    : run ? `${count} run${count === 1 ? "" : "s"} · last ${ago(run.started_at)}` : "No runs this week";
-  return `<button type="button" class="node ${st}${selected ? " selected" : ""}" data-agent="${key}" id="node-${key}">
-    <span class="node-status">${esc(statusLabel(st).toUpperCase())}</span>
-    <span class="node-name">${esc(agentName(key))}</span>
-    <span class="node-sub" data-ago="${run ? esc(run.started_at) : ""}">${esc(sub)}</span>
+  const sub = run ? `${statusLabel(st)}, ${count} run${count === 1 ? "" : "s"}` : "Idle";
+  const shortRole = agentRole(key).replace(/ agent$/, "");
+  return `<button type="button" class="node ${st}${selected ? " selected" : ""}" data-agent="${key}" id="node-${key}"
+      data-tip="${esc(AGENTS[key].short)}" aria-label="${esc(`${agentName(key)}, ${agentRole(key)}. ${sub} in the last 7 days. Open profile.`)}">
+    <span class="node-top">${avatar(key)}<span class="node-id"><span class="node-name">${esc(agentName(key))}</span>
+      <span class="node-role">${esc(shortRole)}</span></span></span>
+    <span class="node-sub"><span class="dot ${statusDot(st)}"></span>${esc(sub)}</span>
   </button>`;
 }
 
@@ -212,10 +232,7 @@ function renderMap() {
     ? `<span class="muted small">Runs on its own schedule:</span>${standalone.map(nodeHtml).join("")}`
     : "";
   document.querySelectorAll(".node").forEach((el) =>
-    el.addEventListener("click", () => {
-      const run = latestRun(el.dataset.agent) || state.runs.find((r) => r.agent === el.dataset.agent);
-      if (run) selectRun(run.id);
-    })
+    el.addEventListener("click", () => openDrawer(el.dataset.agent, el))
   );
   requestAnimationFrame(drawEdges);
 }
@@ -272,35 +289,88 @@ function renderRoster() {
   $("roster").innerHTML = Object.keys(AGENTS).map((key) => {
     const run = state.runs.find((r) => r.agent === key);
     const st = run?.status || "idle";
-    const meta = run ? `${statusLabel(st)} · <span data-ago="${esc(run.started_at)}">${ago(run.started_at)}</span>`
-      : key === "packaging" ? "Not connected yet" : "No runs yet";
-    return `<li title="${esc(AGENTS[key].role)}"><span class="dot ${statusDot(st)}"></span>
-      <span class="r-name">${esc(agentName(key))}</span><span class="r-meta">${meta}</span></li>`;
+    const meta = run
+      ? `<span class="dot ${statusDot(st)}"></span>${statusLabel(st)}, <span data-ago="${esc(run.started_at)}">${ago(run.started_at)}</span>`
+      : "No runs yet";
+    return `<li><button type="button" class="roster-btn" data-agent="${key}" data-tip="${esc(AGENTS[key].short)}">
+      ${avatar(key)}<span class="r-id"><span class="r-name">${esc(agentName(key))}</span><span class="r-role">${esc(agentRole(key))}</span></span>
+      <span class="r-meta">${meta}</span></button></li>`;
   }).join("");
+  document.querySelectorAll(".roster-btn").forEach((b) => b.addEventListener("click", () => openDrawer(b.dataset.agent, b)));
 }
 
 function alertItems() {
   const items = [];
   for (const r of state.runs) {
     if (r.status === "failed" && within(r.started_at, 7)) {
-      items.push({ run: r.id, ts: r.finished_at || r.started_at, title: `${agentName(r.agent)} failed`, body: `${clientName(r.client_id)}: ${r.error || "no error recorded"}` });
+      items.push({ kind: "run", id: r.id, run: r.id, agent: r.agent, dismissed: !!r.alert_dismissed,
+        ts: r.finished_at || r.started_at, title: `${agentName(r.agent)} failed`,
+        body: `${clientName(r.client_id)}: ${r.error || "no error recorded"}` });
     }
   }
   for (const e of state.events) {
     if (e.kind !== "alert" || e.message.startsWith("Run failed:")) continue;
     const r = state.runs.find((x) => x.id === e.run_id);
-    items.push({ run: e.run_id, ts: e.created_at, title: `${agentName(r?.agent)} data alert`, body: `${clientName(r?.client_id)}: ${e.message}` });
+    items.push({ kind: "event", id: e.id, run: e.run_id, agent: r?.agent, dismissed: !!e.dismissed,
+      ts: e.created_at, title: `${agentName(r?.agent)} flagged a problem`,
+      body: `${clientName(r?.client_id)}: ${e.message}` });
   }
   return items.sort((a, b) => new Date(b.ts) - new Date(a.ts));
 }
 
 function renderAlerts() {
-  const items = alertItems().slice(0, 8);
-  $("alerts").innerHTML = items.length
-    ? items.map((a) => `<li data-run="${esc(a.run)}"><span class="a-title">${esc(a.title)}</span><span class="a-body">${esc(a.body)}</span><span class="small muted" data-ago="${esc(a.ts)}">${ago(a.ts)}</span></li>`).join("")
-    : `<li class="empty" style="background:none;border:0;cursor:default">No alerts in the last 7 days.</li>`;
-  document.querySelectorAll("#alerts li[data-run]").forEach((li) => li.addEventListener("click", () => selectRun(li.dataset.run)));
+  const all = alertItems();
+  const open = all.filter((a) => !a.dismissed);
+  const dismissedCount = all.length - open.length;
+  const shown = (state.showDismissed ? all : open).slice(0, 12);
+  $("alerts-clear").hidden = open.length === 0;
+  $("alerts-toggle").hidden = dismissedCount === 0;
+  $("alerts-toggle").textContent = state.showDismissed ? "Hide dismissed" : `Show dismissed (${dismissedCount})`;
+  $("alerts").innerHTML = shown.length
+    ? shown.map((a) => `<li class="alert${a.dismissed ? " is-dismissed" : ""}">
+        <button type="button" class="alert-main" data-run="${esc(a.run)}">
+          ${a.agent ? avatar(a.agent, "sm") : ""}<span class="a-text"><span class="a-title">${esc(a.title)}</span>
+          <span class="a-body">${esc(a.body)}</span>
+          <span class="small muted" data-ago="${esc(a.ts)}">${ago(a.ts)}</span></span>
+        </button>
+        <button type="button" class="alert-x" data-kind="${a.kind}" data-id="${esc(a.id)}" data-dismissed="${a.dismissed}"
+          aria-label="${a.dismissed ? "Restore alert" : "Dismiss alert"}" title="${a.dismissed ? "Restore" : "Dismiss"}">
+          ${a.dismissed
+            ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>'
+            : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'}
+        </button></li>`).join("")
+    : `<li class="empty">${all.length ? "All caught up. Dismissed alerts are hidden." : "No alerts in the last 7 days."}</li>`;
+  document.querySelectorAll("#alerts .alert-main").forEach((b) => b.addEventListener("click", () => selectRun(b.dataset.run)));
+  document.querySelectorAll("#alerts .alert-x").forEach((b) => b.addEventListener("click", () =>
+    setDismissed([{ kind: b.dataset.kind, id: b.dataset.id }], b.dataset.dismissed !== "true")));
 }
+
+async function setDismissed(items, dismissed) {
+  // Update the screen first, then save; put it back if the save fails.
+  const apply = (flag) => {
+    for (const it of items) {
+      if (it.kind === "run") { const r = state.runs.find((x) => x.id === it.id); if (r) r.alert_dismissed = flag; }
+      else { const e = state.events.find((x) => String(x.id) === String(it.id)); if (e) e.dismissed = flag; }
+    }
+    renderAlerts(); renderKpis(); renderClients();
+  };
+  apply(dismissed);
+  try {
+    await callApi("/api/command-center/alerts/dismiss", {
+      runs: items.filter((i) => i.kind === "run").map((i) => i.id),
+      events: items.filter((i) => i.kind === "event").map((i) => Number(i.id)),
+      dismissed,
+    });
+  } catch (err) {
+    apply(!dismissed);
+    banner(`Could not ${dismissed ? "dismiss" : "restore"} the alert: ${err.message}`, true);
+  }
+}
+$("alerts-clear").addEventListener("click", () => {
+  const open = alertItems().filter((a) => !a.dismissed);
+  if (open.length) setDismissed(open.map((a) => ({ kind: a.kind, id: a.id })), true);
+});
+$("alerts-toggle").addEventListener("click", () => { state.showDismissed = !state.showDismissed; renderAlerts(); });
 
 function renderRuns() {
   const demoOnly = $("filter-demo").checked;
@@ -346,7 +416,7 @@ function renderTimeline() {
   const evs = state.events.filter((e) => e.run_id === run.id);
   const rows = [`<li><span class="t-time">+0:00</span><span class="t-mark"></span><span class="t-msg">Started. ${esc(run.trigger || "")}</span></li>`];
   for (const e of evs) {
-    const to = e.to_agent ? ` <span class="to">to ${esc(agentName(e.to_agent))}</span>` : "";
+    const to = e.to_agent ? ` <span class="to">to ${esc(agentName(e.to_agent))}, ${esc(agentRole(e.to_agent))}</span>` : "";
     rows.push(`<li><span class="t-time">${offset(run.started_at, e.created_at)}</span><span class="t-mark ${e.kind}"></span><span class="t-msg">${esc(e.message)}${to}</span></li>`);
   }
   if (run.status === "running") {
@@ -425,6 +495,82 @@ $("demo-btn").addEventListener("click", async () => {
 });
 
 
+// ── agent profile ────────────────────────────────────────────────────────────
+let drawerReturnFocus = null;
+
+function openDrawer(key, from) {
+  state.drawerAgent = key;
+  drawerReturnFocus = from || document.activeElement;
+  renderDrawer();
+  $("drawer").hidden = false;
+  $("drawer-backdrop").hidden = false;
+  requestAnimationFrame(() => $("drawer").classList.add("open"));
+  $("drawer-close").focus();
+}
+
+function closeDrawer() {
+  if ($("drawer").hidden) return;
+  $("drawer").classList.remove("open");
+  $("drawer").hidden = true;
+  $("drawer-backdrop").hidden = true;
+  state.drawerAgent = null;
+  if (drawerReturnFocus && drawerReturnFocus.focus) drawerReturnFocus.focus();
+}
+
+function renderDrawer() {
+  const key = state.drawerAgent;
+  if (!key) return;
+  const a = AGENTS[key];
+  const runs = state.runs.filter((r) => r.agent === key);
+  const r7 = runs.filter((r) => within(r.started_at, 7));
+  const done = runs.filter((r) => r.status === "success" || r.status === "failed");
+  const ok = done.filter((r) => r.status === "success").length;
+  const sources = Object.keys(AGENTS).filter((k) => AGENTS[k].handsTo.includes(key));
+  const chip = (k) => `<button type="button" class="chip chip-av" data-open-agent="${k}">${avatar(k, "xs")}${esc(agentName(k))}</button>`;
+  $("drawer-body").innerHTML = `
+    <div class="d-head">${avatar(key, "lg")}<div><h2 id="drawer-name">${esc(a.name)}</h2><p class="d-role">${esc(a.role)}</p></div></div>
+    <p class="d-short">${esc(a.short)}</p>
+    <dl class="d-facts">
+      <div><dt>What ${esc(a.name)} does</dt><dd>${esc(a.does)}</dd></div>
+      <div><dt>What starts ${esc(a.name)}</dt><dd>${esc(a.startedBy)}</dd></div>
+      <div><dt>Gets work from</dt><dd>${sources.length ? `<span class="chips">${sources.map(chip).join("")}</span>` : "A schedule or a client action"}</dd></div>
+      <div><dt>Hands work to</dt><dd>${a.handsTo.length ? `<span class="chips">${a.handsTo.map(chip).join("")}</span>` : "Nobody; this is the last step"}</dd></div>
+    </dl>
+    <div class="d-stats">
+      <div><span class="v">${r7.length}</span><span class="l">Runs this week</span></div>
+      <div><span class="v">${done.length ? Math.round((ok / done.length) * 100) + "%" : "None"}</span><span class="l">Success, 30 days</span></div>
+      <div><span class="v">${runs[0] ? `<span data-ago="${esc(runs[0].started_at)}">${ago(runs[0].started_at)}</span>` : "Never"}</span><span class="l">Last run</span></div>
+    </div>
+    <h3 class="d-sub">Recent runs</h3>
+    <ul class="d-runs">${runs.slice(0, 6).map((r) => `<li><button type="button" data-drawer-run="${esc(r.id)}">
+        <span class="dot ${statusDot(r.status)}"></span><span class="d-run-main">${esc(clientName(r.client_id))}${r.demo ? " (demo)" : ""}</span>
+        <span class="d-run-meta">${esc(statusLabel(r.status))}, ${esc(clock(r.started_at))}</span></button></li>`).join("")
+      || `<li class="empty">No runs in the last 30 days.</li>`}</ul>
+    <button type="button" class="btn btn-primary d-talk" id="drawer-talk">Talk to ${esc(a.name)}</button>`;
+  document.querySelectorAll("[data-open-agent]").forEach((b) => b.addEventListener("click", () => { state.drawerAgent = b.dataset.openAgent; renderDrawer(); }));
+  document.querySelectorAll("[data-drawer-run]").forEach((b) => b.addEventListener("click", () => {
+    closeDrawer(); showTab("agents"); selectRun(b.dataset.drawerRun);
+    $("tl-h").scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  $("drawer-talk").addEventListener("click", async () => {
+    const k = state.drawerAgent;
+    closeDrawer(); showTab("talk");
+    await startThread({ mode: "direct", agents: [k] });
+  });
+}
+
+$("drawer-close").addEventListener("click", closeDrawer);
+$("drawer-backdrop").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeDrawer();
+  if (e.key === "Tab" && !$("drawer").hidden) {
+    const f = [...$("drawer").querySelectorAll("button, [href], input, select, textarea")].filter((x) => !x.disabled);
+    if (!f.length) return;
+    if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+    else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+  }
+});
+
 // ── tabs ─────────────────────────────────────────────────────────────────────
 const TABS = ["agents", "clients", "talk"];
 
@@ -491,7 +637,7 @@ function renderClients() {
     const counts = Object.fromEntries(STAGES.map((st) => [st, pcs.filter((p) => p.status === st).length]));
     const inProd = pcs.filter((p) => p.status !== "Scheduled").length;
     const runs7 = state.runs.filter((r) => r.client_id === c.id && within(r.started_at, 7));
-    const alerts = alertItems().filter((a) => state.runs.find((r) => r.id === a.run)?.client_id === c.id).length;
+    const alerts = alertItems().filter((a) => !a.dismissed && state.runs.find((r) => r.id === a.run)?.client_id === c.id).length;
     const lastRun = state.runs.find((r) => r.client_id === c.id);
     const statusCls = c.subscription_status === "Active" ? "ok" : c.subscription_status === "Onboarding" ? "warn" : "";
     const cadence = (c.research_cadence_weeks || 1) === 1 ? "weekly" : `every ${c.research_cadence_weeks} weeks`;
@@ -609,7 +755,7 @@ function renderChat() {
     }
     const cls = ["msg", "agent", m.agent === "coordinator" ? "coordinator" : "", m.status === "thinking" ? "thinking" : "", m.status === "error" ? "error" : ""].join(" ");
     const body = m.status === "thinking" ? `${esc(agentName(m.agent))} is thinking…` : esc(m.content);
-    return `<div class="${cls}"><span class="who">${esc(agentName(m.agent))}${m.agent === "coordinator" ? " · meeting notes" : ""}</span><div class="body">${body}</div></div>`;
+    return `<div class="${cls}"><span class="who">${avatar(m.agent, "sm")}${esc(agentName(m.agent))}<span class="muted">${esc(agentRole(m.agent))}</span></span><div class="body">${body}</div></div>`;
   }).join("") || `<p class="empty">Say hello, or ask what happened this week.</p>`;
   renderTargets(t);
   if (nearBottom || state.messages.some((m) => m.status === "thinking")) scrollChat();
@@ -642,7 +788,7 @@ function openNewPanel(mode) {
 
 function renderNewChips() {
   $("new-agents").innerHTML = Object.keys(AGENTS).map((k) =>
-    `<button type="button" class="chip" data-new="${k}" aria-pressed="${state.newPicked.includes(k)}" title="${esc(AGENTS[k].role)}">${esc(agentName(k))}</button>`).join("");
+    `<button type="button" class="chip chip-av" data-new="${k}" aria-pressed="${state.newPicked.includes(k)}" title="${esc(`${AGENTS[k].role}: ${AGENTS[k].short}`)}">${avatar(k, "xs")}${esc(agentName(k))}</button>`).join("");
   document.querySelectorAll("[data-new]").forEach((b) => b.addEventListener("click", () => {
     const k = b.dataset.new;
     state.newPicked = state.newPicked.includes(k) ? state.newPicked.filter((x) => x !== k) : [...state.newPicked, k];

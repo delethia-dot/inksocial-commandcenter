@@ -33,7 +33,9 @@
         <div class="eyebrow">InkSocial · Operations</div>
         <h1>Agent Command Center</h1>
       </div>
-      <span class="pill"><span id="live-dot" class="dot dot-idle"></span><span id="live-label">Connecting</span></span>
+      <span class="pill live-pill" tabindex="0" aria-describedby="live-help"><span id="live-dot" class="dot dot-idle"></span><span id="live-label">Connecting</span>
+        <span id="live-help" role="tooltip" class="tip-box">This page updates the moment any agent starts, finishes a step or hands off, whether it ran on a schedule, was started by a client, or you ran it here. Client data also refreshes every minute.</span>
+      </span>
       <div class="demo">
         <label for="demo-client" class="sr-only">Client for demo run</label>
         <select id="demo-client"></select>
@@ -102,7 +104,13 @@
         </section>
 
         <section class="card" aria-labelledby="alerts-h">
-          <h2 id="alerts-h">Alerts</h2>
+          <div class="card-head">
+            <h2 id="alerts-h">Alerts</h2>
+            <div class="alert-tools">
+              <button type="button" class="link-btn" id="alerts-toggle"></button>
+              <button type="button" class="link-btn" id="alerts-clear">Clear all</button>
+            </div>
+          </div>
           <ul id="alerts" class="alerts"></ul>
         </section>
 
@@ -174,6 +182,15 @@
       </div>
     </div>
   </div>
+
+  <!-- Agent profile -->
+  <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+  <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-name" hidden>
+    <button type="button" class="drawer-close" id="drawer-close" aria-label="Close agent profile">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div id="drawer-body"></div>
+  </aside>
 
   <script type="module" src="assets/app.js"></script>
 </body>
